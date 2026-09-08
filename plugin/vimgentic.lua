@@ -17,4 +17,4 @@ command("VimgenticOpen", function() require("vimgentic").reopen() end, { desc = 
 command("VimgenticAbortAll", function() require("vimgentic").abort_all() end, { desc = "Abort all vimgentic requests" })
 command("VimgenticPickModel", function() require("vimgentic").pick_model() end, { desc = "Pick a model for each operation" })
 command("VimgenticLogs", function() require("vimgentic").logs() end, { desc = "Open vimgentic logs" })
-command("VimgenticTerminal", function() require("vimgentic").terminal() end, { desc = "Open the current chat in pi's terminal UI" })
+command("VimgenticTerminal", function() require("vimgentic").terminal() end, { desc = "Focus or open the pi terminal sidebar" })

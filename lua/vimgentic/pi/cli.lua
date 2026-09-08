@@ -3,9 +3,7 @@ local util = require("vimgentic.util")
 
 local M = {}
 
-function M.build(options)
-  options = options or {}
-  local command = { config.get().pi.command, "--mode", "rpc" }
+local function add_options(command, options)
   if options.model then
     vim.list_extend(command, { "--model", options.model })
   end
@@ -18,6 +16,14 @@ function M.build(options)
     vim.list_extend(command, { "--name", util.truncate(options.name, 100) })
   end
   return command
+end
+
+function M.build(options)
+  return add_options({ config.get().pi.command, "--mode", "rpc" }, options or {})
+end
+
+function M.interactive(options)
+  return add_options({ config.get().pi.command }, options or {})
 end
 
 function M.session_id()

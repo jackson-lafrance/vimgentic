@@ -197,7 +197,7 @@ function M.models()
         local operation = selected[1]
         if not operation then return end
         models.pick(operation, function(model)
-          if operation == "chat" and model then
+          if operation == "chat" then
             require("vimgentic.ops.chat").set_model(model)
           end
         end)

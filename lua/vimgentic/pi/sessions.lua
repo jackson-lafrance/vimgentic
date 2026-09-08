@@ -316,6 +316,24 @@ local function collect_metadata(files, callback)
   end
 end
 
+function M.find_by_id(cwd, session_id, callback)
+  scan_files(cwd_directory(cwd), function(error_message, files)
+    if error_message then
+      vim.schedule(function() callback(error_message) end)
+      return
+    end
+    local suffix = "_" .. session_id .. ".jsonl"
+    local found
+    for _, path in ipairs(files) do
+      if path:sub(-#suffix) == suffix then
+        found = path
+        break
+      end
+    end
+    vim.schedule(function() callback(nil, found) end)
+  end)
+end
+
 function M.list(options, callback)
   options = options or {}
   local cwd = options.cwd or util.cwd()

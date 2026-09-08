@@ -9,9 +9,6 @@ local defaults = {
   chat = {
     width = 0.45,
     min_width = 60,
-    input_height = 5,
-    input_max_height = 15,
-    show_thinking = false,
   },
   pi = {
     command = "pi",
@@ -42,15 +39,6 @@ local function validate(config)
   end
   if type(config.chat.min_width) ~= "number" or config.chat.min_width < 20 then
     error("vimgentic: chat.min_width must be at least 20")
-  end
-  if type(config.chat.input_height) ~= "number" or config.chat.input_height < 1 then
-    error("vimgentic: chat.input_height must be positive")
-  end
-  if type(config.chat.input_max_height) ~= "number" or config.chat.input_max_height < config.chat.input_height then
-    error("vimgentic: chat.input_max_height must be at least chat.input_height")
-  end
-  if type(config.chat.show_thinking) ~= "boolean" then
-    error("vimgentic: chat.show_thinking must be boolean")
   end
   if type(config.pi.command) ~= "string" or config.pi.command == "" then
     error("vimgentic: pi.command must be a non-empty string")

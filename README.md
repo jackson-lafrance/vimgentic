@@ -1,12 +1,12 @@
 # vimgentic
 
-A native Neovim interface for [pi](https://github.com/earendil-works/pi-mono). Vimgentic uses pi's JSONL RPC mode, so search, visual rewrites, and chat keep pi's tools, extensions, skills, sessions, and model routing.
+A Neovim interface for [pi](https://github.com/earendil-works/pi-mono). Search and visual rewrites use pi's JSONL RPC mode. Chat runs pi's native interactive UI in a right-hand terminal sidebar.
 
 ## Requirements
 
 - Neovim 0.11 or newer with `vim.system`
 - `pi` on `$PATH`
-- [fzf-lua](https://github.com/ibhagwan/fzf-lua) for history, model, fork, and completion pickers
+- [fzf-lua](https://github.com/ibhagwan/fzf-lua) for history and model pickers
 - `fzf` for fzf-lua
 
 ## Install
@@ -21,11 +21,10 @@ require("vimgentic").setup({
   models = {
     search = nil, -- provider/model; nil uses pi's default
     visual = nil,
-    chat = nil,
+    chat = nil,   -- initial model for the terminal
   },
   chat = {
     width = 0.45,
-    show_thinking = false,
   },
 })
 ```
@@ -39,15 +38,14 @@ local vimgentic = require("vimgentic")
 
 vim.keymap.set("n", "<leader>9s", vimgentic.search, { desc = "Vimgentic: search" })
 vim.keymap.set("x", "<leader>9v", vimgentic.visual, { desc = "Vimgentic: replace selection" })
-vim.keymap.set("n", "<leader>9c", vimgentic.chat_toggle, { desc = "Vimgentic: chat focus" })
+vim.keymap.set("n", "<leader>9c", vimgentic.chat_toggle, { desc = "Vimgentic: terminal focus" })
 vim.keymap.set("x", "<leader>9c", vimgentic.chat_selection, { desc = "Vimgentic: send selection to chat" })
-vim.keymap.set("n", "<leader>9C", vimgentic.chat_close, { desc = "Vimgentic: hide chat" })
+vim.keymap.set("n", "<leader>9C", vimgentic.chat_close, { desc = "Vimgentic: hide terminal" })
 vim.keymap.set("n", "<leader>9h", vimgentic.history, { desc = "Vimgentic: history" })
 vim.keymap.set("n", "<leader>9o", vimgentic.reopen, { desc = "Vimgentic: reopen search" })
 vim.keymap.set("n", "<leader>9x", vimgentic.abort_all, { desc = "Vimgentic: abort" })
 vim.keymap.set("n", "<leader>9m", vimgentic.pick_model, { desc = "Vimgentic: pick model" })
 vim.keymap.set("n", "<leader>9l", vimgentic.logs, { desc = "Vimgentic: logs" })
-vim.keymap.set("n", "<leader>9T", vimgentic.terminal, { desc = "Vimgentic: terminal UI" })
 ```
 
 ## Search and visual rewrite
@@ -58,30 +56,19 @@ vim.keymap.set("n", "<leader>9T", vimgentic.terminal, { desc = "Vimgentic: termi
 
 Both operations create normal pi sessions and add them to vimgentic's session index.
 
-## Chat
+## Terminal chat
 
-The right sidebar has a Markdown transcript and a multiline input buffer. Closing the sidebar hides its windows but keeps the RPC process alive.
+`chat_toggle()` opens interactive `pi` in one right-hand Neovim terminal window. The terminal gives direct access to Pi's transcript, editor, tools, slash commands, extensions, settings, tree, login, and other native UI features.
 
-| Key | Buffer | Action |
-| --- | --- | --- |
-| `<CR>` | input, normal | Submit; steer while pi streams |
-| `<C-s>` | input, insert | Submit |
-| `<C-f>` | input, normal | Queue a follow-up |
-| `<C-f>` | input, insert | Pick a file under Neovim's cwd |
-| `<Tab>` | transcript | Toggle the current thinking or tool fold |
-| `<C-c>` | either | Abort the current agent operation |
-| `q` | transcript | Hide the sidebar |
+Closing the sidebar hides its window but leaves the terminal job alive. Opening it again restores the same process and screen.
 
-Type `!command` to run pi's RPC `bash` command. `@path` completion uses open buffers and `v:oldfiles`; it never runs `git ls-files`. Visual `chat_selection()` inserts an `@path:start-end` reference and a fenced copy of the selection.
+- `<leader>9c` opens the sidebar or switches focus between the editor and sidebar.
+- `<leader>9C` hides the sidebar without stopping pi.
+- `q` hides the sidebar after entering terminal-normal mode with `<C-\><C-n>`.
+- `<leader>9x` sends Ctrl-C to pi and aborts RPC search or visual requests.
+- `chat_selection()` inserts `@path:start-end` and the selected text through bracketed paste.
 
-### Slash commands
-
-- `/model`, `/thinking`, `/compact`, `/new`, and `/name`
-- `/session`, `/fork`, `/clone`, `/export`, and `/resume`
-- `/tree`, `/abort`, and `/terminal`
-- Pi extension commands, prompt templates, and skills from `get_commands`
-
-`/terminal` stops the RPC process before it opens `pi --session <path>` in a terminal buffer. When the terminal exits, vimgentic reconnects through RPC and rebuilds the transcript.
+Use Pi's native commands such as `/model`, `/thinking`, `/tree`, `/settings`, `/hotkeys`, `/share`, and `/login` directly. The chat choice in `pick_model()` sends Pi's native `/model` command when the terminal runs.
 
 ## History
 
@@ -92,11 +79,13 @@ Type `!command` to run pi's RPC `bash` command. `@path` completion uses open buf
 - `ctrl-q` restores a search session into quickfix.
 - `ctrl-d` confirms and deletes a session with `trash`, when available.
 
-Selecting a session switches the live chat process to that session. Session previews show the first user message and the last assistant message.
+Selecting a session stops the current terminal job before it starts `pi --session <path>`. Session previews show the first user message and the last assistant message.
 
 ## Commands
 
 Vimgentic defines `:VimgenticSearch`, `:VimgenticVisual`, `:VimgenticChatToggle`, `:VimgenticChatClose`, `:VimgenticHistory`, `:VimgenticOpen`, `:VimgenticAbortAll`, `:VimgenticPickModel`, `:VimgenticLogs`, and `:VimgenticTerminal`.
+
+`:VimgenticTerminal` is an alias for the terminal sidebar toggle.
 
 ## Tests
 

@@ -49,7 +49,8 @@ end
 require("parse_spec")
 require("rpc_framing_spec")
 require("index_spec")
-require("transcript_spec")
+require("sessions_spec")
+require("terminal_sidebar_spec")
 
 io.write(string.format("\n%d tests, %d failures\n", tests, failures))
 if failures > 0 then
