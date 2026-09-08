@@ -58,8 +58,10 @@ function Terminal:_set_keymaps(buffer)
   vim.keymap.set("n", "q", function() self:close() end, { buffer = buffer, nowait = true, desc = "Hide pi sidebar" })
   vim.keymap.set("n", "<leader>9c", function() self:focus_flip() end, { buffer = buffer, desc = "Focus editor" })
   vim.keymap.set("n", "<leader>9C", function() self:close() end, { buffer = buffer, desc = "Hide pi sidebar" })
+  vim.keymap.set("n", "<leader>9x", function() self:abort() end, { buffer = buffer, desc = "Abort pi" })
   vim.keymap.set("t", "<leader>9c", function() self:focus_editor() end, { buffer = buffer, desc = "Focus editor" })
   vim.keymap.set("t", "<leader>9C", function() self:close() end, { buffer = buffer, desc = "Hide pi sidebar" })
+  vim.keymap.set("t", "<leader>9x", function() self:abort() end, { buffer = buffer, desc = "Abort pi" })
 end
 
 function Terminal:is_sidebar(window)
