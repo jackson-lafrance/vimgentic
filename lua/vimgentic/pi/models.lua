@@ -63,8 +63,8 @@ local function persist(callback)
       end)
     end)
   end
-  vim.uv.fs_mkdir(directory, 493, function(mkdir_error)
-    if mkdir_error and not tostring(mkdir_error):match("EEXIST") then
+  util.mkdir_p(directory, function(mkdir_error)
+    if mkdir_error then
       vim.schedule(function() callback(mkdir_error) end)
       return
     end

@@ -50,8 +50,8 @@ local function write_file(path, contents, callback)
       end)
     end)
   end
-  vim.uv.fs_mkdir(directory, 493, function(mkdir_error)
-    if mkdir_error and not tostring(mkdir_error):match("EEXIST") then
+  util.mkdir_p(directory, function(mkdir_error)
+    if mkdir_error then
       callback(mkdir_error)
       return
     end

@@ -74,6 +74,37 @@ function M.split_lines(text)
   return vim.split(text:gsub("\r\n", "\n"), "\n", { plain = true })
 end
 
+function M.mkdir_p(path, callback)
+  vim.uv.fs_stat(path, function(stat_error, stat)
+    if stat and stat.type == "directory" then
+      callback()
+      return
+    end
+    if stat_error and not tostring(stat_error):match("ENOENT") then
+      callback(stat_error)
+      return
+    end
+    local parent = vim.fs.dirname(path)
+    if not parent or parent == path then
+      callback(stat_error or "could not create directory " .. path)
+      return
+    end
+    M.mkdir_p(parent, function(parent_error)
+      if parent_error then
+        callback(parent_error)
+        return
+      end
+      vim.uv.fs_mkdir(path, 493, function(mkdir_error)
+        if mkdir_error and not tostring(mkdir_error):match("EEXIST") then
+          callback(mkdir_error)
+        else
+          callback()
+        end
+      end)
+    end)
+  end)
+end
+
 function M.set_buffer_lines(buffer, start_line, end_line, lines)
   if not vim.api.nvim_buf_is_valid(buffer) then
     return false
