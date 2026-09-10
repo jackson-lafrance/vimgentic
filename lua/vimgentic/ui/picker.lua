@@ -157,33 +157,36 @@ end
 function M.history(state)
   state = state or { all_projects = false, all_pi = false }
   local cwd = util.cwd()
-  index.list({ cwd = state.all_projects and nil or cwd }, function(index_error, indexed)
-    vim.schedule(function()
-      if index_error then
-        index.report_error(index_error)
-        return
-      end
-      if not state.all_pi then
-        show_history(indexed, state)
-        return
-      end
-      sessions.list({ cwd = cwd, all_projects = state.all_projects }, function(session_error, pi_entries)
-        if session_error then
-          util.notify(tostring(session_error), vim.log.levels.ERROR)
+  index.sync_from_log(function(sync_error)
+    index.report_error(sync_error)
+    index.list({ cwd = state.all_projects and nil or cwd }, function(index_error, indexed)
+      vim.schedule(function()
+        if index_error then
+          index.report_error(index_error)
           return
         end
-        local by_path = {}
-        local combined = {}
-        for _, entry in ipairs(indexed) do
-          by_path[entry.path] = true
-          table.insert(combined, entry)
+        if not state.all_pi then
+          show_history(indexed, state)
+          return
         end
-        for _, entry in ipairs(pi_entries) do
-          if not by_path[entry.path] then
+        sessions.list({ cwd = cwd, all_projects = state.all_projects }, function(session_error, pi_entries)
+          if session_error then
+            util.notify(tostring(session_error), vim.log.levels.ERROR)
+            return
+          end
+          local by_path = {}
+          local combined = {}
+          for _, entry in ipairs(indexed) do
+            by_path[entry.path] = true
             table.insert(combined, entry)
           end
-        end
-        show_history(combined, state)
+          for _, entry in ipairs(pi_entries) do
+            if not by_path[entry.path] then
+              table.insert(combined, entry)
+            end
+          end
+          show_history(combined, state)
+        end)
       end)
     end)
   end)

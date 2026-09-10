@@ -1,8 +1,13 @@
+local sessions = require("vimgentic.pi.sessions")
 local util = require("vimgentic.util")
 
 local M = {}
 local Index = {}
 Index.__index = Index
+
+local function default_log_path()
+  return vim.fn.stdpath("data") .. "/vimgentic/session-log.jsonl"
+end
 
 local function read_file(path, callback)
   vim.uv.fs_open(path, "r", 438, function(open_error, descriptor)
@@ -62,6 +67,7 @@ end
 function Index.new(options)
   return setmetatable({
     path = assert(options.path),
+    log = options.log or default_log_path(),
     mutations = {},
     mutation_active = false,
   }, Index)
@@ -198,6 +204,76 @@ function Index:list(options, callback)
   end)
 end
 
+function Index:sync_from_log(callback)
+  callback = callback or function() end
+  self:_read(function(read_error, entries)
+    if read_error then
+      callback(read_error)
+      return
+    end
+    read_file(self.log, function(log_error, contents)
+      if log_error then
+        callback(log_error)
+        return
+      end
+      local known = {}
+      for _, entry in ipairs(entries) do
+        known[entry.path] = true
+      end
+      local pending = {}
+      for line in tostring(contents):gmatch("[^\r\n]+") do
+        local ok, record = pcall(vim.json.decode, line)
+        if ok and type(record) == "table" and type(record.path) == "string" and not known[record.path] then
+          known[record.path] = true
+          table.insert(pending, record)
+        end
+      end
+      if #pending == 0 then
+        callback(nil)
+        return
+      end
+      local remaining = #pending
+      local collected = {}
+      for _, record in ipairs(pending) do
+        sessions.read_metadata(record.path, function(metadata_error, metadata)
+          if not metadata_error and metadata then
+            table.insert(collected, {
+              path = metadata.path,
+              kind = "chat",
+              cwd = type(record.cwd) == "string" and record.cwd or metadata.cwd,
+              prompt = metadata.prompt,
+              created = metadata.created,
+            })
+          end
+          remaining = remaining - 1
+          if remaining ~= 0 then
+            return
+          end
+          if #collected == 0 then
+            callback(nil)
+            return
+          end
+          self:_mutate(function(current)
+            local present = {}
+            for _, entry in ipairs(current) do
+              present[entry.path] = true
+            end
+            for _, entry in ipairs(collected) do
+              if not present[entry.path] then
+                entry.created = entry.created or os.time()
+                entry.nvim_pid = entry.nvim_pid or vim.fn.getpid()
+                table.insert(current, entry)
+                present[entry.path] = true
+              end
+            end
+            return current
+          end, callback)
+        end)
+      end
+    end)
+  end)
+end
+
 M.Index = Index
 
 local singleton
@@ -218,6 +294,10 @@ end
 
 function M.list(options, callback)
   default_index():list(options, callback)
+end
+
+function M.sync_from_log(callback)
+  default_index():sync_from_log(callback)
 end
 
 function M.path()

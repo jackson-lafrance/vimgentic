@@ -70,7 +70,8 @@ function Status:stop()
   if self.kind == "command" then
     vim.api.nvim_echo({ { "" } }, false, {})
   elseif vim.api.nvim_buf_is_valid(self.buffer) then
-    vim.api.nvim_buf_clear_namespace(self.buffer, namespace, 0, -1)
+    vim.api.nvim_buf_del_extmark(self.buffer, namespace, self.start_mark)
+    vim.api.nvim_buf_del_extmark(self.buffer, namespace, self.end_mark)
   end
 end
 

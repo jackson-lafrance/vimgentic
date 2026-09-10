@@ -13,6 +13,9 @@ local defaults = {
   pi = {
     command = "pi",
   },
+  pairing = {
+    enabled = false,
+  },
   timeout = {
     command = 30000,
     operation = 600000,
@@ -42,6 +45,9 @@ local function validate(config)
   end
   if type(config.pi.command) ~= "string" or config.pi.command == "" then
     error("vimgentic: pi.command must be a non-empty string")
+  end
+  if type(config.pairing.enabled) ~= "boolean" then
+    error("vimgentic: pairing.enabled must be a boolean")
   end
   if type(config.timeout.command) ~= "number" or config.timeout.command <= 0 then
     error("vimgentic: timeout.command must be positive")

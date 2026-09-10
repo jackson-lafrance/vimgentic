@@ -14,9 +14,10 @@ local function valid_buffer(buffer)
   return buffer and vim.api.nvim_buf_is_valid(buffer)
 end
 
-local function default_start(_, command, cwd, on_exit)
+local function default_start(_, command, cwd, on_exit, env)
   return vim.fn.termopen(command, {
     cwd = cwd,
+    env = env,
     on_exit = function(_, code) on_exit(code) end,
   })
 end
@@ -39,6 +40,7 @@ function Terminal.new(options)
     schedule = options.schedule or vim.schedule,
     send = options.send or default_send,
     session_id = options.session_id or cli.session_id(),
+    session_log = options.session_log or (vim.fn.stdpath("data") .. "/vimgentic/session-log.jsonl"),
     session_path = options.session_path,
     start_job = options.start_job or default_start,
     stop_job = options.stop_job or default_stop,
@@ -59,9 +61,7 @@ function Terminal:_set_keymaps(buffer)
   vim.keymap.set("n", "<leader>9c", function() self:focus_flip() end, { buffer = buffer, desc = "Focus editor" })
   vim.keymap.set("n", "<leader>9C", function() self:close() end, { buffer = buffer, desc = "Hide pi sidebar" })
   vim.keymap.set("n", "<leader>9x", function() self:abort() end, { buffer = buffer, desc = "Abort pi" })
-  vim.keymap.set("t", "<leader>9c", function() self:focus_editor() end, { buffer = buffer, desc = "Focus editor" })
-  vim.keymap.set("t", "<leader>9C", function() self:close() end, { buffer = buffer, desc = "Hide pi sidebar" })
-  vim.keymap.set("t", "<leader>9x", function() self:abort() end, { buffer = buffer, desc = "Abort pi" })
+  vim.keymap.set("t", "<Esc>", [[<C-\><C-n>]], { buffer = buffer, remap = false, desc = "Enter normal mode" })
 end
 
 function Terminal:is_sidebar(window)
@@ -152,10 +152,11 @@ function Terminal:_start()
   end
   self.job_token = (self.job_token or 0) + 1
   local token = self.job_token
+  local env = { VIMGENTIC_SESSION_LOG = self.session_log }
   local command = self:command()
   local job_id = self.start_job(self.buffer, command, self.cwd, function(code)
     self.schedule(function() self:_handle_exit(token, code) end)
-  end)
+  end, env)
   if not job_id or job_id <= 0 then
     self.job_id = nil
     util.notify("Could not start pi terminal: " .. tostring(job_id), vim.log.levels.ERROR)
@@ -233,6 +234,10 @@ function Terminal:set_model(model)
 end
 
 function Terminal:send_text(text)
+  if text:find("[%z\1-\8\11-\31\127]") then
+    util.notify("The draft contains terminal control characters; nothing was sent", vim.log.levels.WARN)
+    return false
+  end
   self:open()
   if not self.job_id then
     return false

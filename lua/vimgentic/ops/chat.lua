@@ -1,6 +1,7 @@
 local index = require("vimgentic.pi.index")
 local models = require("vimgentic.pi.models")
 local sessions = require("vimgentic.pi.sessions")
+local selection = require("vimgentic.selection")
 local Terminal = require("vimgentic.chat.terminal").Terminal
 local util = require("vimgentic.util")
 
@@ -80,18 +81,12 @@ function Chat:set_model(model)
 end
 
 function Chat:selection_to_input()
-  local buffer = vim.api.nvim_get_current_buf()
-  local first = vim.fn.getpos("'<")[2]
-  local last = vim.fn.getpos("'>")[2]
-  if first == 0 or last == 0 then
+  local context, error_message = selection.capture({ visual = true })
+  if not context then
+    util.notify(error_message, vim.log.levels.WARN)
     return
   end
-  if first > last then first, last = last, first end
-  local path = vim.api.nvim_buf_get_name(buffer)
-  local text = table.concat(vim.api.nvim_buf_get_lines(buffer, first - 1, last, false), "\n")
-  local filetype = vim.bo[buffer].filetype
-  local reference = string.format("@%s:%d-%d", util.relative_path(path), first, last)
-  self.terminal_sidebar:send_text(table.concat({ reference, "```" .. filetype, text, "```" }, "\n"))
+  self.terminal_sidebar:send_text(selection.render(context))
 end
 
 function Chat:shutdown()
@@ -108,6 +103,7 @@ function M.close() get():close() end
 function M.abort() if instance then instance:abort() end end
 function M.switch_session(path) get():switch_session(path) end
 function M.selection_to_input() get():selection_to_input() end
+function M.draft(text) return get().terminal_sidebar:send_text(text) end
 function M.terminal() get():toggle() end
 function M.shutdown() if instance then instance:shutdown() end end
 function M.set_model(model) get():set_model(model) end

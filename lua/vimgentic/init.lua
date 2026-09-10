@@ -25,6 +25,14 @@ function M.visual(options)
   require("vimgentic.ops.visual").visual(options)
 end
 
+function M.visual_preview()
+  require("vimgentic.ops.visual").preview()
+end
+
+function M.pair(options)
+  require("vimgentic.ops.pair").actions(options)
+end
+
 function M.chat_toggle()
   require("vimgentic.ops.chat").toggle()
 end

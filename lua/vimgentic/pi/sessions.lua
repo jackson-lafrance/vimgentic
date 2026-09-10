@@ -9,7 +9,9 @@ local function session_root()
 end
 
 local function cwd_directory(cwd)
-  return session_root() .. "/--" .. cwd:gsub("/", "-") .. "--"
+  -- Mirrors pi's getDefaultSessionDirPath: the leading path separator is
+  -- dropped, then every separator becomes "-", wrapped in "--"/"--".
+  return session_root() .. "/--" .. cwd:gsub("^[/\\]", ""):gsub("[/\\:]", "-") .. "--"
 end
 
 local function read_range(path, offset, length, callback)
@@ -186,6 +188,8 @@ local function timestamp_seconds(timestamp, fallback)
   })
 end
 
+M.cwd_directory = cwd_directory
+
 local function read_metadata(path, callback)
   with_stat(path, function(stat_error, stat)
     if stat_error then
@@ -315,6 +319,8 @@ local function collect_metadata(files, callback)
     end)
   end
 end
+
+M.read_metadata = read_metadata
 
 function M.find_by_id(cwd, session_id, callback)
   scan_files(cwd_directory(cwd), function(error_message, files)

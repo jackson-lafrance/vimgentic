@@ -39,11 +39,12 @@ function M.run(options)
     argv = cli.build({
       model = models.get(options.kind),
       name = options.name,
+      tools = options.tools,
     }),
     cwd = cwd,
     log_id = request_id,
   })
-  local request = { client = client, status = options.status, done = false }
+  local request = { client = client, status = options.status, done = false, on_finish = options.on_finish }
   active[request_id] = request
   local unsubscribe
 
@@ -54,6 +55,9 @@ function M.run(options)
     end
     options.status:stop()
     client:close()
+    if request.on_finish then
+      request.on_finish()
+    end
   end
 
   local function finish(text, error_message)
@@ -146,6 +150,9 @@ function M.abort_all()
       request.client:write({ type = "abort" })
       request.status:stop()
       request.client:close()
+      if request.on_finish then
+        request.on_finish()
+      end
     end
   end
   active = {}

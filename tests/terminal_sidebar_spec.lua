@@ -1,5 +1,6 @@
 local Terminal = require("vimgentic.chat.terminal").Terminal
 local cli = require("vimgentic.pi.cli")
+local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 
 local function fixture()
   local starts = {}
@@ -40,7 +41,7 @@ end
 
 describe("vimgentic.chat.terminal", function()
   it("builds an interactive pi command without RPC mode", function()
-    eq({ "pi", "--model", "provider/model", "--session", "/tmp/session.jsonl" }, cli.interactive({
+    eq({ "pi", "--tui-mode", "fullscreen", "--model", "provider/model", "--session", "/tmp/session.jsonl", "--extension", root .. "/pi/session-log.js" }, cli.interactive({
       model = "provider/model",
       session_path = "/tmp/session.jsonl",
     }))
@@ -65,7 +66,7 @@ describe("vimgentic.chat.terminal", function()
     sidebar:switch_session("/tmp/selected.jsonl")
     eq({ 1 }, stops)
     eq(2, #starts)
-    eq({ "pi", "--model", "provider/model", "--session", "/tmp/selected.jsonl" }, starts[2].command)
+    eq({ "pi", "--tui-mode", "fullscreen", "--model", "provider/model", "--session", "/tmp/selected.jsonl", "--extension", root .. "/pi/session-log.js" }, starts[2].command)
     cleanup(sidebar)
   end)
 
@@ -74,6 +75,37 @@ describe("vimgentic.chat.terminal", function()
     sidebar:open()
     sidebar:set_model("other/new-model")
     eq({ { job_id = 1, text = "/model other/new-model\r" } }, sends)
+    cleanup(sidebar)
+  end)
+
+  it("restores editor focus without starting a new terminal job or sending a prompt", function()
+    local sidebar, starts, _, sends = fixture()
+    local editor_window = vim.api.nvim_get_current_win()
+    sidebar:focus_flip()
+    truthy(sidebar:is_sidebar(vim.api.nvim_get_current_win()))
+    sidebar:focus_flip()
+    eq(editor_window, vim.api.nvim_get_current_win())
+    sidebar:focus_flip()
+    eq(1, #starts)
+    eq({}, sends)
+    cleanup(sidebar)
+  end)
+
+  it("rejects control characters that could escape bracketed paste", function()
+    local sidebar, starts, _, sends = fixture()
+    eq(false, sidebar:send_text("code\27[201~\rsubmit this"))
+    eq(false, sidebar:send_text("code\003"))
+    eq({}, starts)
+    eq({}, sends)
+    cleanup(sidebar)
+  end)
+
+  it("maps only Escape in terminal mode so typing is never delayed", function()
+    local sidebar = fixture()
+    sidebar:open()
+    local tmaps = vim.api.nvim_buf_get_keymap(sidebar.buffer, "t")
+    eq(1, #tmaps)
+    eq("<Esc>", tmaps[1].lhs)
     cleanup(sidebar)
   end)
 
@@ -86,6 +118,24 @@ describe("vimgentic.chat.terminal", function()
       { job_id = 1, text = "\27[200~one\ntwo\27[201~" },
       { job_id = 1, text = "\003" },
     }, sends)
+    cleanup(sidebar)
+  end)
+
+  it("passes the session log path to the pi process environment", function()
+    local seen_env = nil
+    local sidebar = Terminal.new({
+      cwd = "/tmp/project",
+      enter_insert = false,
+      model = "provider/model",
+      schedule = function(callback) callback() end,
+      session_log = "/tmp/vimgentic-tests/session-log.jsonl",
+      start_job = function(_, _, _, _, env)
+        seen_env = env
+        return 1
+      end,
+    })
+    sidebar:open()
+    eq({ VIMGENTIC_SESSION_LOG = "/tmp/vimgentic-tests/session-log.jsonl" }, seen_env)
     cleanup(sidebar)
   end)
 end)

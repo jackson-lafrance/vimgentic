@@ -7,8 +7,17 @@ command("VimgenticSearch", function(args)
 end, { nargs = "?", desc = "Search with pi and open quickfix" })
 
 command("VimgenticVisual", function(args)
-  require("vimgentic").visual({ prompt = args.args ~= "" and args.args or nil })
-end, { nargs = "?", range = true, desc = "Replace the selected lines with pi" })
+  require("vimgentic").visual({
+    prompt = args.args ~= "" and args.args or nil,
+    first = args.line1,
+    last = args.line2,
+  })
+end, { nargs = "?", range = true, desc = "Request a replacement for the selected lines" })
+
+command("VimgenticVisualPreview", function() require("vimgentic").visual_preview() end, { desc = "Review the pending visual replacement" })
+command("VimgenticPair", function(args)
+  require("vimgentic").pair(args.range > 0 and { first = args.line1, last = args.line2 } or nil)
+end, { range = true, desc = "Draft an explanation or next-change request in pi" })
 
 command("VimgenticChatToggle", function() require("vimgentic").chat_toggle() end, { desc = "Focus or open vimgentic chat" })
 command("VimgenticChatClose", function() require("vimgentic").chat_close() end, { desc = "Hide vimgentic chat" })

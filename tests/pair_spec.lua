@@ -1,0 +1,86 @@
+local vimgentic = require("vimgentic")
+local chat = require("vimgentic.ops.chat")
+local util = require("vimgentic.util")
+
+local function fixture(callback)
+  local original_select, original_draft, original_notify = vim.ui.select, chat.draft, util.notify
+  local buffer = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.api.nvim_buf_set_name(buffer, "/tmp/project/pair-example.lua")
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, { "local tax = 1", "return price + tax", "-- end" })
+  local state = { drafts = {}, notices = {} }
+  vim.ui.select = function(items, options, on_choice)
+    state.items, state.options, state.on_choice = items, options, on_choice
+  end
+  chat.draft = function(text) table.insert(state.drafts, text) end
+  util.notify = function(message) table.insert(state.notices, message) end
+  local ok, error_message = xpcall(function() callback(buffer, state) end, debug.traceback)
+  vim.ui.select, chat.draft, util.notify = original_select, original_draft, original_notify
+  vim.api.nvim_buf_delete(buffer, { force = true })
+  assert(ok, error_message)
+end
+
+describe("vimgentic.pair", function()
+  it("drafts an explanation-only request with a snapshot of the selected unsaved code", function()
+    fixture(function(buffer, state)
+      vimgentic.pair({ first = 2, last = 2 })
+      eq("Explain this code", state.options.format_item(state.items[1]))
+      eq("Plan the next change", state.options.format_item(state.items[2]))
+      eq({}, state.drafts)
+      vim.api.nvim_buf_set_lines(buffer, 1, 2, false, { "return updated_total" })
+      state.on_choice(state.items[1])
+      eq(1, #state.drafts)
+      local draft = state.drafts[1]
+      truthy(draft:find("Inspect relevant definitions and callers", 1, true))
+      truthy(draft:find("Do not generate new code, replacement snippets, or patches. Do not edit files.", 1, true))
+      truthy(draft:find("/tmp/project/pair-example.lua", 1, true))
+      truthy(draft:find("Lines: 2-2", 1, true))
+      truthy(draft:find("return price + tax", 1, true))
+      eq(nil, draft:find("return updated_total", 1, true))
+      eq({ "local tax = 1", "return updated_total", "-- end" }, vim.api.nvim_buf_get_lines(buffer, 0, -1, false))
+    end)
+  end)
+
+  it("drafts an inspection-first plan and asks for the task when context does not name one", function()
+    fixture(function(_, state)
+      vimgentic.pair()
+      state.on_choice(state.items[2])
+      eq(1, #state.drafts)
+      truthy(state.drafts[1]:find("Inspect the relevant code", 1, true))
+      truthy(state.drafts[1]:find("Do not implement the change or generate replacement code yet.", 1, true))
+      truthy(state.drafts[1]:find("ask one focused question instead of inventing work", 1, true))
+      truthy(state.drafts[1]:find("Lines: 1-3", 1, true))
+    end)
+  end)
+
+  it("uses an explicit command range in the drafted code context", function()
+    fixture(function(_, state)
+      local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
+      dofile(root .. "/plugin/vimgentic.lua")
+      vim.cmd("2,2VimgenticPair")
+      state.on_choice(state.items[1])
+      truthy(state.drafts[1]:find("Lines: 2-2", 1, true))
+      truthy(state.drafts[1]:find("return price + tax", 1, true))
+      eq(nil, state.drafts[1]:find("local tax = 1", 1, true))
+    end)
+  end)
+
+  it("does not open chat when the user cancels the action picker", function()
+    fixture(function(buffer, state)
+      vimgentic.pair({ first = 2, last = 2 })
+      state.on_choice(nil)
+      eq({}, state.drafts)
+      eq(buffer, vim.api.nvim_get_current_buf())
+    end)
+  end)
+
+  it("rejects a non-source buffer before it opens the action picker or chat", function()
+    fixture(function(buffer, state)
+      vim.bo[buffer].buftype = "nofile"
+      vimgentic.pair()
+      eq(nil, state.items)
+      eq({}, state.drafts)
+      eq({ "Vimgentic needs a source buffer" }, state.notices)
+    end)
+  end)
+end)

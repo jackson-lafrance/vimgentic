@@ -2,6 +2,7 @@ local config = require("vimgentic.config")
 local util = require("vimgentic.util")
 
 local M = {}
+local plugin_root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h:h:h")
 
 local function add_options(command, options)
   if options.model then
@@ -15,6 +16,9 @@ local function add_options(command, options)
   if options.name then
     vim.list_extend(command, { "--name", util.truncate(options.name, 100) })
   end
+  if options.tools then
+    vim.list_extend(command, { "--tools", table.concat(options.tools, ",") })
+  end
   return command
 end
 
@@ -23,7 +27,12 @@ function M.build(options)
 end
 
 function M.interactive(options)
-  return add_options({ config.get().pi.command }, options or {})
+  local command = add_options({ config.get().pi.command, "--tui-mode", "fullscreen" }, options or {})
+  vim.list_extend(command, { "--extension", plugin_root .. "/pi/session-log.js" })
+  if config.get().pairing.enabled then
+    vim.list_extend(command, { "--extension", plugin_root .. "/pi/pairing.js" })
+  end
+  return command
 end
 
 function M.session_id()

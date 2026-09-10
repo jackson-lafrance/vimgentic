@@ -5,6 +5,7 @@ local M = {}
 function M.open(options)
   options = options or {}
   local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_name(buffer, "vimgentic://prompt/" .. buffer)
   local width = math.max(40, math.min(90, vim.o.columns - 8))
   local height = math.max(3, math.min(10, vim.o.lines - 8))
   local window = vim.api.nvim_open_win(buffer, true, {
@@ -57,13 +58,22 @@ function M.open(options)
     options.on_submit(prompt)
   end
 
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    buffer = buffer,
+    once = true,
+    callback = function()
+      if not closed then
+        closed = true
+        if options.on_cancel then options.on_cancel() end
+      end
+    end,
+  })
   vim.api.nvim_create_autocmd("BufWriteCmd", {
     buffer = buffer,
     once = false,
     callback = submit,
   })
   vim.keymap.set("n", "q", function() close(true) end, { buffer = buffer, nowait = true })
-  vim.keymap.set({ "n", "i" }, "<Esc>", function() close(true) end, { buffer = buffer })
   vim.cmd("startinsert")
 
   return {
