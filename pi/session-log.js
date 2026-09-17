@@ -1,4 +1,4 @@
-const { appendFileSync, mkdirSync } = require("node:fs");
+const { appendFileSync, mkdirSync, renameSync, writeFileSync } = require("node:fs");
 const { dirname } = require("node:path");
 
 // The nvim side sets VIMGENTIC_SESSION_LOG to stdpath("data")/vimgentic/session-log.jsonl
@@ -7,15 +7,33 @@ const { dirname } = require("node:path");
 // sessions it did not start directly.
 module.exports = function sessionLog(pi) {
   pi.on("session_start", (_event, ctx) => {
-    const logPath = process.env.VIMGENTIC_SESSION_LOG;
-    if (!logPath) return;
     const path = ctx.sessionManager.getSessionFile();
     if (!path) return;
-    try {
-      mkdirSync(dirname(logPath), { recursive: true });
-      appendFileSync(logPath, JSON.stringify({ cwd: process.cwd(), path }) + "\n");
-    } catch {
-      // Logging must never break session startup.
+    const cwd = ctx.cwd;
+    const statePath = process.env.VIMGENTIC_SESSION_STATE;
+    if (statePath) {
+      try {
+        mkdirSync(dirname(statePath), { recursive: true });
+        const temporary = `${statePath}.tmp-${process.pid}`;
+        writeFileSync(temporary, JSON.stringify({
+          path,
+          cwd,
+          id: ctx.sessionManager.getSessionId(),
+          token: process.env.VIMGENTIC_SESSION_TOKEN,
+        }), { mode: 0o600 });
+        renameSync(temporary, statePath);
+      } catch {
+        // State reporting must never break session startup.
+      }
+    }
+    const logPath = process.env.VIMGENTIC_SESSION_LOG;
+    if (logPath) {
+      try {
+        mkdirSync(dirname(logPath), { recursive: true });
+        appendFileSync(logPath, JSON.stringify({ cwd, path }) + "\n");
+      } catch {
+        // Logging must never break session startup.
+      }
     }
   });
 };

@@ -1,5 +1,6 @@
 local cli = require("vimgentic.pi.cli")
 local config = require("vimgentic.config")
+local session_state = require("vimgentic.chat.state")
 local util = require("vimgentic.util")
 
 local M = {}
@@ -34,6 +35,10 @@ function Terminal.new(options)
   options = options or {}
   return setmetatable({
     cwd = options.cwd or util.cwd(),
+    current_cwd = options.current_cwd or util.cwd,
+    read_state = options.read_state or session_state.read,
+    session_state = options.session_state or vim.fn.tempname(),
+    on_session = options.on_session,
     enter_insert = options.enter_insert ~= false,
     model = options.model,
     on_start = options.on_start,
@@ -120,22 +125,57 @@ function Terminal:_replace_buffer()
   end
 end
 
-function Terminal:_handle_exit(token, code)
-  if token ~= self.job_token then
-    return
-  end
-  self.job_id = nil
-  self.exit_code = code
-  local restart = self.restart_after_exit
-  self.restart_after_exit = nil
-  if restart and not self.shutting_down then
-    self:_replace_buffer()
-    self:_start()
+function Terminal:_sync_session(callback)
+  callback = callback or function() end
+  local token = self.job_token
+  if not token then callback(); return end
+  self.state_read = (self.state_read or 0) + 1
+  local reading = self.state_read
+  self.read_state(self.session_state, tostring(token), function(error_message, state)
+    if token == self.job_token and reading == self.state_read then
+      if error_message and error_message ~= self.state_error then
+        util.notify(error_message, vim.log.levels.ERROR)
+      end
+      self.state_error = error_message
+      if state then
+        local changed = self.session_path ~= state.path or self.cwd ~= state.cwd
+        self.session_path, self.session_id, self.cwd = state.path, state.id, state.cwd
+        if changed and self.on_session then self.on_session(state) end
+      end
+    end
+    callback(error_message)
+  end)
+end
+
+function Terminal:_stop_watcher()
+  if self.state_watcher then
+    self.state_watcher:stop()
+    self.state_watcher:close()
+    self.state_watcher = nil
   end
 end
 
+function Terminal:_handle_exit(token, code)
+  if token ~= self.job_token or self.exiting then return end
+  self.job_id = nil
+  self.exit_code = code
+  self.exiting = true
+  self:_stop_watcher()
+  self:_sync_session(function()
+    if token ~= self.job_token then return end
+    self.exiting = false
+    local restart = self.restart_after_exit
+    self.restart_after_exit = nil
+    if restart and not self.shutting_down then
+      self.cwd, self.session_path, self.session_id = restart.cwd, restart.path, restart.id
+      self:_replace_buffer()
+      self:_show(restart.callback)
+    end
+  end)
+end
+
 function Terminal:_start()
-  if self.job_id then
+  if self.job_id or self.exiting then
     return
   end
   if valid_buffer(self.buffer) and vim.bo[self.buffer].buftype == "terminal" then
@@ -152,30 +192,91 @@ function Terminal:_start()
   end
   self.job_token = (self.job_token or 0) + 1
   local token = self.job_token
-  local env = { VIMGENTIC_SESSION_LOG = self.session_log }
+  local env = {
+    VIMGENTIC_SESSION_LOG = self.session_log,
+    VIMGENTIC_SESSION_STATE = self.session_state,
+    VIMGENTIC_SESSION_TOKEN = tostring(token),
+  }
   local command = self:command()
-  local job_id = self.start_job(self.buffer, command, self.cwd, function(code)
+  local ok, job_id = pcall(self.start_job, self.buffer, command, self.cwd, function(code)
     self.schedule(function() self:_handle_exit(token, code) end)
   end, env)
-  if not job_id or job_id <= 0 then
+  if not ok or not job_id or job_id <= 0 then
     self.job_id = nil
     util.notify("Could not start pi terminal: " .. tostring(job_id), vim.log.levels.ERROR)
     return
   end
   self.job_id = job_id
   self.exit_code = nil
-  if self.on_start then
-    self.on_start(self.session_path, self.session_id)
+  self:_stop_watcher()
+  self.state_watcher = vim.uv.new_fs_poll()
+  self.state_watcher:start(self.session_state, 250, function(error_message)
+    if not error_message then
+      self.schedule(function()
+        if token == self.job_token and self.job_id and not self.exiting and not self.action_pending then self:_sync_session() end
+      end)
+    end
+  end)
+  if self.on_start then self.on_start(self.session_path, self.session_id, self.cwd) end
+end
+
+function Terminal:_show(callback)
+  self:_open_window()
+  self:_start()
+  if self.enter_insert and self.job_id then vim.cmd("startinsert") end
+  if callback then callback(self.job_id ~= nil) end
+end
+
+function Terminal:_with_project(action)
+  if self.action_pending or self.exiting then
+    util.notify("A chat switch is already pending; try again after it finishes", vim.log.levels.WARN)
+    return false
   end
+  self.shutting_down = false
+  self.action_pending = true
+  self.action_serial = (self.action_serial or 0) + 1
+  local serial = self.action_serial
+  local cwd = self.current_cwd()
+  local function finish() if serial == self.action_serial then self.action_pending = false end end
+  local function current()
+    if serial ~= self.action_serial or self.shutting_down then return false end
+    if self.exiting then
+      util.notify("Pi is stopping; retry the chat action", vim.log.levels.WARN)
+      finish()
+      return false
+    end
+    if self.current_cwd() ~= cwd then
+      util.notify("The editor directory changed; retry the chat action", vim.log.levels.WARN)
+      finish()
+      return false
+    end
+    return true
+  end
+  if not self.job_token and not self.session_path then self.cwd = cwd end
+  self:_sync_session(function(error_message)
+    if not current() then return end
+    if error_message then finish(); return end
+    if self.cwd == cwd then action(finish); return end
+    vim.ui.select({ "Switch project", "Keep current chat", "Cancel" }, {
+      prompt = string.format("Chat uses %s. Switch to %s? This stops Pi and starts a new chat; unsent input is lost.", self.cwd, cwd),
+    }, function(choice)
+      if not current() then return end
+      if choice == "Switch project" then
+        self:_restart({ cwd = cwd, id = cli.session_id() }, function(started)
+          if started then action(finish) else finish() end
+        end)
+      elseif choice == "Keep current chat" then
+        action(finish)
+      else
+        finish()
+      end
+    end)
+  end)
+  return true
 end
 
 function Terminal:open()
-  self.shutting_down = false
-  self:_open_window()
-  self:_start()
-  if self.enter_insert and self.job_id then
-    vim.cmd("startinsert")
-  end
+  return self:_with_project(function(finish) self:_show(finish) end)
 end
 
 function Terminal:focus_editor()
@@ -210,27 +311,36 @@ function Terminal:close()
   self.window = nil
 end
 
-function Terminal:_restart()
-  local running = self.job_id ~= nil
-  self:open()
-  if not running or not self.job_id then
+function Terminal:_restart(target, callback)
+  target.callback = callback
+  self:_open_window()
+  if not self.job_id then
+    self.cwd, self.session_path, self.session_id = target.cwd, target.path, target.id
+    self:_show(callback)
     return
   end
-  self.restart_after_exit = true
+  self.restart_after_exit = target
   self.stop_job(self.job_id)
 end
 
-function Terminal:switch_session(path)
-  self.session_path = path
-  self.session_id = nil
-  self:_restart()
+function Terminal:switch_session(path, cwd)
+  if self.action_pending or self.exiting then
+    util.notify("A chat switch is already pending; try again after it finishes", vim.log.levels.WARN)
+    return false
+  end
+  self.shutting_down = false
+  self.action_pending = true
+  self:_restart({ path = path, cwd = cwd or self.cwd }, function() self.action_pending = false end)
+  return true
 end
 
 function Terminal:set_model(model)
-  self.model = model
-  if self.job_id and model then
-    self.send(self.job_id, "/model " .. model .. "\r")
-  end
+  if not self.job_id or not model then self.model = model; return end
+  self:_with_project(function(finish)
+    self.model = model
+    if self.job_id then self.send(self.job_id, "/model " .. model .. "\r") end
+    finish()
+  end)
 end
 
 function Terminal:send_text(text)
@@ -238,12 +348,12 @@ function Terminal:send_text(text)
     util.notify("The draft contains terminal control characters; nothing was sent", vim.log.levels.WARN)
     return false
   end
-  self:open()
-  if not self.job_id then
-    return false
-  end
-  self.send(self.job_id, "\27[200~" .. text .. "\27[201~")
-  return true
+  return self:_with_project(function(finish)
+    self:_show(function(started)
+      if started then self.send(self.job_id, "\27[200~" .. text .. "\27[201~") end
+      finish()
+    end)
+  end)
 end
 
 function Terminal:abort()
@@ -254,6 +364,9 @@ end
 
 function Terminal:shutdown()
   self.shutting_down = true
+  self.action_serial = (self.action_serial or 0) + 1
+  self.action_pending = false
+  self:_stop_watcher()
   self.restart_after_exit = nil
   if self.job_id then
     self.stop_job(self.job_id)

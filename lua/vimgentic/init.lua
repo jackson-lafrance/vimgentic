@@ -21,6 +21,38 @@ function M.search(options)
   require("vimgentic.ops.search").search(options)
 end
 
+function M.review(options)
+  require("vimgentic.ops.background").start("review", options)
+end
+
+function M.review_open()
+  return require("vimgentic.ops.background").open("review")
+end
+
+function M.review_quickfix()
+  require("vimgentic.ops.background").quickfix("review")
+end
+
+function M.tour(options)
+  require("vimgentic.ops.background").start("tour", options)
+end
+
+function M.tour_open()
+  return require("vimgentic.ops.background").open("tour")
+end
+
+function M.tour_close()
+  require("vimgentic.ops.background").close_tour()
+end
+
+function M.tour_next()
+  require("vimgentic.ops.background").move(1)
+end
+
+function M.tour_prev()
+  require("vimgentic.ops.background").move(-1)
+end
+
 function M.visual(options)
   require("vimgentic.ops.visual").visual(options)
 end
@@ -31,6 +63,10 @@ end
 
 function M.pair(options)
   require("vimgentic.ops.pair").actions(options)
+end
+
+function M.explain_error()
+  require("vimgentic.ops.diagnostic").explain()
 end
 
 function M.chat_toggle()

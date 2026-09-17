@@ -19,6 +19,9 @@ local function add_options(command, options)
   if options.tools then
     vim.list_extend(command, { "--tools", table.concat(options.tools, ",") })
   end
+  if options.skill_path then
+    vim.list_extend(command, { "--skill", options.skill_path })
+  end
   return command
 end
 
@@ -33,6 +36,10 @@ function M.interactive(options)
     vim.list_extend(command, { "--extension", plugin_root .. "/pi/pairing.js" })
   end
   return command
+end
+
+function M.skill_path(name)
+  return plugin_root .. "/skills/" .. name .. "/SKILL.md"
 end
 
 function M.session_id()

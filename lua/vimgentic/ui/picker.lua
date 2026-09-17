@@ -123,7 +123,7 @@ local function show_history(entries, state)
     fzf_opts = {
       ["--delimiter"] = "\t",
       ["--with-nth"] = "1",
-      ["--header"] = "ctrl-p: projects  ctrl-a: all pi  ctrl-q: quickfix  ctrl-d: delete",
+      ["--header"] = "ctrl-p: projects  ctrl-a: all pi  ctrl-r: report  ctrl-q: quickfix  ctrl-d: delete",
     },
     actions = {
       ["enter"] = function(selected)
@@ -138,12 +138,22 @@ local function show_history(entries, state)
         state.all_pi = not state.all_pi
         vim.schedule(function() M.history(state) end)
       end,
+      ["ctrl-r"] = function(selected)
+        local entry = selected_entry(selected)
+        if entry and (entry.kind == "review" or entry.kind == "tour") then
+          require("vimgentic.ops.background").from_history(entry)
+        else
+          util.notify("Reports are available only for vimgentic review and tour sessions")
+        end
+      end,
       ["ctrl-q"] = function(selected)
         local entry = selected_entry(selected)
         if entry and entry.kind == "search" then
           open_search(entry)
+        elseif entry and (entry.kind == "review" or entry.kind == "tour") then
+          require("vimgentic.ops.background").from_history(entry, true)
         else
-          util.notify("Quickfix is available only for vimgentic search sessions")
+          util.notify("Quickfix is available only for vimgentic search, review, and tour sessions")
         end
       end,
       ["ctrl-d"] = function(selected)
@@ -159,7 +169,9 @@ function M.history(state)
   local cwd = util.cwd()
   index.sync_from_log(function(sync_error)
     index.report_error(sync_error)
-    index.list({ cwd = state.all_projects and nil or cwd }, function(index_error, indexed)
+    local scope = {}
+    if not state.all_projects then scope.cwd = cwd end
+    index.list(scope, function(index_error, indexed)
       vim.schedule(function()
         if index_error then
           index.report_error(index_error)
@@ -193,7 +205,7 @@ function M.history(state)
 end
 
 function M.models()
-  require("fzf-lua").fzf_exec({ "search", "visual", "chat" }, {
+  require("fzf-lua").fzf_exec({ "search", "review", "tour", "visual", "chat" }, {
     prompt = "Vimgentic operation> ",
     actions = {
       ["enter"] = function(selected)

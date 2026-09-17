@@ -1,3 +1,4 @@
+local lock = require("vimgentic.pi.lock")
 local sessions = require("vimgentic.pi.sessions")
 local util = require("vimgentic.util")
 
@@ -36,23 +37,38 @@ end
 local function write_file(path, contents, callback)
   local directory = vim.fs.dirname(path)
   local function write()
-    local temporary = path .. ".tmp-" .. tostring(vim.uv.hrtime())
-    vim.uv.fs_open(temporary, "w", 384, function(open_error, descriptor)
+    local temporary = path .. ".tmp-" .. vim.uv.os_getpid() .. "-" .. tostring(vim.uv.hrtime())
+    vim.uv.fs_open(temporary, "wx", 384, function(open_error, descriptor)
       if open_error then
         callback(open_error)
         return
       end
-      vim.uv.fs_write(descriptor, contents, 0, function(write_error)
+      local function finish(write_error)
         vim.uv.fs_close(descriptor, function(close_error)
+          local function failed(error_message)
+            vim.uv.fs_unlink(temporary, function() callback(error_message) end)
+          end
           if write_error or close_error then
-            callback(write_error or close_error)
+            failed(write_error or close_error)
             return
           end
           vim.uv.fs_rename(temporary, path, function(rename_error)
-            callback(rename_error)
+            if rename_error then failed(rename_error) else callback() end
           end)
         end)
-      end)
+      end
+      local function write_remaining(offset)
+        vim.uv.fs_write(descriptor, contents:sub(offset + 1), offset, function(write_error, written)
+          if write_error or not written or written == 0 then
+            finish(write_error or "Could not write session index")
+          elseif offset + written < #contents then
+            write_remaining(offset + written)
+          else
+            finish()
+          end
+        end)
+      end
+      write_remaining(0)
     end)
   end
   util.mkdir_p(directory, function(mkdir_error)
@@ -70,6 +86,7 @@ function Index.new(options)
     log = options.log or default_log_path(),
     mutations = {},
     mutation_active = false,
+    lock_timeout = options.lock_timeout or 5000,
   }, Index)
 end
 
@@ -103,23 +120,41 @@ function Index:_next_mutation()
   end
   self.mutation_active = true
   local mutation = table.remove(self.mutations, 1)
-  self:_read(function(read_error, entries)
-    if read_error then
+  local function complete(error_message, entries)
+    vim.schedule(function()
       self.mutation_active = false
-      mutation.callback(read_error)
       self:_next_mutation()
-      return
+      mutation.callback(error_message, entries)
+    end)
+  end
+  lock.acquire(self.path .. ".lock", self.lock_timeout, function(lock_error, release)
+    if lock_error then complete(lock_error); return end
+    local finished = false
+    local function finish(error_message, entries, changed)
+      if finished then return end
+      finished = true
+      local function unlock(write_error)
+        release(function(close_error) complete(write_error or close_error, entries) end)
+      end
+      if error_message or changed == false then
+        unlock(error_message)
+      else
+        self:_write(entries, unlock)
+      end
     end
-    local changed = mutation.change(entries)
-    self:_write(changed, function(write_error)
-      self.mutation_active = false
-      mutation.callback(write_error, changed)
-      self:_next_mutation()
+    self:_read(function(read_error, entries)
+      if read_error then finish(read_error); return end
+      local ok, error_message = pcall(mutation.change, entries, finish)
+      if not ok then finish(error_message) end
     end)
   end)
 end
 
 function Index:_mutate(change, callback)
+  self:_transaction(function(entries, finish) finish(nil, change(entries)) end, callback)
+end
+
+function Index:_transaction(change, callback)
   table.insert(self.mutations, { change = change, callback = callback or function() end })
   self:_next_mutation()
 end
@@ -154,53 +189,35 @@ end
 
 function Index:list(options, callback)
   options = options or {}
-  self:_read(function(read_error, entries)
-    if read_error then
-      callback(read_error)
-      return
-    end
-    if #entries == 0 then
-      callback(nil, {})
-      return
-    end
+  self:_transaction(function(entries, finish)
+    if #entries == 0 then finish(nil, {}, false); return end
     local remaining = #entries
     local kept = {}
-    local pruned = false
-    for index, entry in ipairs(entries) do
+    local failure
+    for position, entry in ipairs(entries) do
       vim.uv.fs_stat(entry.path, function(stat_error, stat)
-        if not stat_error and stat and stat.type == "file" then
-          kept[index] = entry
-        else
-          pruned = true
+        if stat_error and not tostring(stat_error):match("ENOENT") then
+          failure = stat_error
+        elseif stat and stat.type == "file" then
+          kept[position] = entry
         end
         remaining = remaining - 1
-        if remaining ~= 0 then
-          return
-        end
+        if remaining ~= 0 then return end
         local compacted = {}
         for item_index = 1, #entries do
-          if kept[item_index] then
-            table.insert(compacted, kept[item_index])
-          end
+          if kept[item_index] then table.insert(compacted, kept[item_index]) end
         end
-        local filtered = {}
-        for _, item in ipairs(compacted) do
-          if not options.cwd or item.cwd == options.cwd then
-            table.insert(filtered, item)
-          end
-        end
-        table.sort(filtered, function(left, right)
-          return (left.created or 0) > (right.created or 0)
-        end)
-        if pruned then
-          self:_write(compacted, function(write_error)
-            callback(write_error, filtered)
-          end)
-        else
-          callback(nil, filtered)
-        end
+        finish(failure, compacted, #compacted ~= #entries)
       end)
     end
+  end, function(error_message, entries)
+    if error_message then callback(error_message); return end
+    local filtered = {}
+    for _, entry in ipairs(entries) do
+      if not options.cwd or entry.cwd == options.cwd then table.insert(filtered, entry) end
+    end
+    table.sort(filtered, function(left, right) return (left.created or 0) > (right.created or 0) end)
+    callback(nil, filtered)
   end)
 end
 

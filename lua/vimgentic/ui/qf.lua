@@ -6,7 +6,7 @@ local last
 -- if only the quickfix window exists.
 local function main_editor_window(qf_win)
   local best, best_area
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
     if not vim.api.nvim_win_is_valid(win) then
       goto continue
     end
@@ -14,7 +14,7 @@ local function main_editor_window(qf_win)
       goto continue
     end
     local buf = vim.api.nvim_win_get_buf(win)
-    if vim.bo[buf].buftype == "terminal" then
+    if vim.bo[buf].buftype ~= "" then
       goto continue
     end
     if vim.bo[buf].filetype == "vimgentic-prompt" then
@@ -36,12 +36,18 @@ local function main_editor_window(qf_win)
   return best
 end
 
-local function bind_enter(buffer)
+local function bind_enter(buffer, on_jump)
+  local original = vim.fn.getqflist({ id = 0, changedtick = 0 })
   -- Make <CR> open the entry in the main editor window instead of the
   -- last-used window (which may be a narrow sidebar/terminal split).
   vim.keymap.set("n", "<CR>", function()
     local qf_win = vim.api.nvim_get_current_win()
     local row = vim.api.nvim_win_get_cursor(qf_win)[1]
+    local current = vim.fn.getqflist({ id = 0, changedtick = 0 })
+    if on_jump and vim.deep_equal(original, current) then
+      on_jump(row)
+      return
+    end
     local target = main_editor_window(qf_win)
     if target then
       vim.api.nvim_set_current_win(target)
@@ -50,12 +56,15 @@ local function bind_enter(buffer)
   end, { buffer = buffer, nowait = true })
 end
 
-function M.open(results, title)
+function M.open(results, title, options)
+  options = options or {}
   local items = require("vimgentic.parse").to_quickfix(results)
-  last = { items = vim.deepcopy(items), title = title }
+  if options.remember ~= false then
+    last = { items = vim.deepcopy(items), title = title }
+  end
   vim.fn.setqflist({}, " ", { title = title, items = items })
   vim.cmd("botright copen")
-  bind_enter(0)
+  bind_enter(0, options.on_jump)
 end
 
 function M.reopen()

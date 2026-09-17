@@ -86,7 +86,7 @@ function M.get(kind)
 end
 
 function M.set(kind, model, callback)
-  if not vim.tbl_contains({ "search", "visual", "chat" }, kind) then
+  if not vim.tbl_contains({ "search", "review", "tour", "visual", "chat" }, kind) then
     error("vimgentic: unknown model operation " .. tostring(kind))
   end
   overrides[kind] = model or vim.NIL
@@ -142,7 +142,8 @@ function M.pick(operation, callback)
           if not selected[1] then
             return
           end
-          local model = selected[1] == "(pi default)" and nil or selected[1]
+          local model = selected[1]
+          if model == "(pi default)" then model = nil end
           M.set(operation, model, function(write_error)
             if write_error then
               util.notify("Could not save model: " .. tostring(write_error), vim.log.levels.ERROR)
