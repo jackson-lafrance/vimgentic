@@ -48,7 +48,8 @@ local function fixture(callback)
     vim.cmd("tabclose!")
   end
   for _, buffer in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_get_name(buffer):find(directory, 1, true) == 1 then
+    local name = vim.api.nvim_buf_get_name(buffer)
+    if name:find(directory, 1, true) == 1 or name:find("oil://" .. directory, 1, true) == 1 then
       vim.api.nvim_buf_delete(buffer, { force = true })
     end
   end
@@ -74,6 +75,79 @@ describe("vimgentic.ui.tour player", function()
       eq(1, highlight[2])
       eq(3, highlight[4].end_row)
       eq("VimgenticTourRange", highlight[4].hl_group)
+      eq({}, notices)
+    end)
+  end)
+
+  it("opening from an unmodified Oil browser reuses its window instead of leaving a middle pane", function()
+    fixture(function(result, notices)
+      local editor = vim.api.nvim_get_current_win()
+      local browser = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_name(browser, "oil://" .. result.cwd .. "/")
+      vim.bo[browser].buftype = "acwrite"
+      vim.bo[browser].filetype = "oil"
+      vim.api.nvim_win_set_buf(editor, browser)
+      eq(false, vim.bo[browser].modified)
+      eq({ editor }, vim.api.nvim_tabpage_list_wins(0))
+
+      local panel = tour.open(result)
+
+      eq({ editor, panel_window(panel) }, vim.api.nvim_tabpage_list_wins(0))
+      eq(editor, vim.api.nvim_get_current_win())
+      eq(result.locations[1].path, vim.api.nvim_buf_get_name(0))
+      truthy(text(panel):find(result.locations[1].notes, 1, true))
+      press("<Right>")
+      eq(editor, vim.api.nvim_get_current_win())
+      eq(result.locations[2].path, vim.api.nvim_buf_get_name(0))
+      tour.close()
+      eq({ editor }, vim.api.nvim_tabpage_list_wins(0))
+      eq({}, notices)
+    end)
+  end)
+
+  it("opening from a modified Oil browser preserves its window and pending directory edits", function()
+    fixture(function(result, notices)
+      local editor = vim.api.nvim_get_current_win()
+      local browser = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_name(browser, "oil://" .. result.cwd .. "/")
+      vim.bo[browser].buftype = "acwrite"
+      vim.bo[browser].filetype = "oil"
+      vim.api.nvim_buf_set_lines(browser, 0, -1, false, { "pending-rename.lua" })
+      vim.api.nvim_win_set_buf(editor, browser)
+      eq(true, vim.bo[browser].modified)
+
+      local panel = tour.open(result)
+      local source = vim.api.nvim_get_current_win()
+
+      eq({ source, editor, panel_window(panel) }, vim.api.nvim_tabpage_list_wins(0))
+      eq(browser, vim.api.nvim_win_get_buf(editor))
+      eq("pending-rename.lua", text(browser))
+      eq(true, vim.bo[browser].modified)
+      eq(result.locations[1].path, vim.api.nvim_buf_get_name(0))
+      truthy(text(panel):find(result.locations[1].notes, 1, true))
+      eq({}, notices)
+    end)
+  end)
+
+  it("opening from a floating Oil browser uses the existing editor without replacing the float", function()
+    fixture(function(result, notices)
+      local editor = vim.api.nvim_get_current_win()
+      local browser = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_name(browser, "oil://" .. result.cwd .. "/")
+      vim.bo[browser].buftype = "acwrite"
+      vim.bo[browser].filetype = "oil"
+      local floating = vim.api.nvim_open_win(browser, true, {
+        relative = "editor", row = 1, col = 1, width = 20, height = 5,
+      })
+      eq(false, vim.bo[browser].modified)
+      eq(floating, vim.api.nvim_get_current_win())
+
+      local panel = tour.open(result)
+
+      eq(editor, vim.api.nvim_get_current_win())
+      eq(result.locations[1].path, vim.api.nvim_buf_get_name(0))
+      eq(browser, vim.api.nvim_win_get_buf(floating))
+      truthy(text(panel):find(result.locations[1].notes, 1, true))
       eq({}, notices)
     end)
   end)

@@ -112,7 +112,7 @@ The draft asks for an evidence-based explanation, not an automatic fix. It does 
 
 ### The tour player
 
-Opening a tour moves the editor directly to its first stop. The editor highlights the active line range; a panel on the right shows **Step N of M** and that range's explanation. Each arrow step opens the next file or range in the same editor window, moves the highlight, and replaces the side explanation. The player never inserts comments into source files.
+Opening a tour moves the editor directly to its first stop. An unmodified, non-floating Oil browser becomes the tour editor instead of remaining as an extra middle pane. Modified Oil buffers keep their window and pending directory edits. The editor highlights the active line range; a panel on the right shows **Step N of M** and that range's explanation. Each arrow step opens the next file or range in the same editor window, moves the highlight, and replaces the side explanation. The player never inserts comments into source files.
 
 - **Right / Left:** next / previous stop, in normal mode in the tour editor or side panel. Up/Down and insert-mode arrows keep their normal behavior.
 - **Escape:** exit tour mode. `q` in the panel, `tour_close()`, and `:VimgenticTourClose` also exit. Cleanup removes the highlight and restores prior editor mappings.

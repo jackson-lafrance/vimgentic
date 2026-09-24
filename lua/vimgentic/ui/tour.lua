@@ -171,7 +171,8 @@ function M.open(result, position)
   if current then close(current) end
   if #result.locations == 0 then return report.open(result) end
   local window = vim.api.nvim_get_current_win()
-  local source = vim.bo.buftype == "" and vim.api.nvim_win_get_config(window).relative == "" and window or nil
+  local reusable = vim.bo.buftype == "" or (vim.bo.filetype == "oil" and not vim.bo.modified)
+  local source = reusable and vim.api.nvim_win_get_config(window).relative == "" and window or nil
   local state = { tab = tab, result = result, source_window = source }
   if not show_stop(state, position or result.position or 1) then
     close(state)
