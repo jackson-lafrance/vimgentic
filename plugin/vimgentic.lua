@@ -37,6 +37,7 @@ end, { range = true, desc = "Draft an explanation or next-change request in pi" 
 command("VimgenticExplainError", function() require("vimgentic").explain_error() end, { desc = "Draft an explanation of the diagnostic at the cursor" })
 
 command("VimgenticChatToggle", function() require("vimgentic").chat_toggle() end, { desc = "Focus or open vimgentic chat" })
+command("VimgenticChatNew", function() require("vimgentic").chat_new() end, { desc = "Start a new chat after confirming replacement of the current chat" })
 command("VimgenticChatClose", function() require("vimgentic").chat_close() end, { desc = "Hide vimgentic chat" })
 command("VimgenticHistory", function() require("vimgentic").history() end, { desc = "Open pi session history" })
 command("VimgenticOpen", function() require("vimgentic").reopen() end, { desc = "Reopen the last search quickfix" })

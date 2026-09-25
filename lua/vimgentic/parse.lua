@@ -66,7 +66,7 @@ function M.report(text)
   local ok, decoded = pcall(vim.json.decode, json)
   if not ok or type(decoded) ~= "table" or type(decoded.report) ~= "string"
     or type(decoded.locations) ~= "table" or not vim.islist(decoded.locations) then
-    return { report = raw, locations = {}, warning = "Pi returned an unstructured report; jump locations are unavailable." }
+    return { report = raw, locations = {}, warning = "Pi returned an unstructured report; jump locations are unavailable." }, false
   end
   local result = { report = decoded.report, locations = {} }
   local function positive(value)
@@ -92,7 +92,7 @@ function M.report(text)
   if result.warning then
     result.report = result.report .. "\n\n## Raw response\n\n" .. raw
   end
-  return result
+  return result, true
 end
 
 function M.strip_code_fence(text)

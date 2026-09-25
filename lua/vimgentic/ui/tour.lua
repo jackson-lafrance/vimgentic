@@ -106,7 +106,7 @@ local function show_stop(state, position)
   end
   state.updating = true
   restore_keys(state)
-  local ok, location = pcall(report.jump, state.result, position, { window = state.source_window, notify = false })
+  local ok, location = pcall(report.jump, state.result, position, { window = state.source_window, notify = false, allow_missing = true })
   if not ok or not location then
     state.updating = false
     if not ok then util.notify(tostring(location), vim.log.levels.ERROR) end
@@ -116,10 +116,12 @@ local function show_stop(state, position)
   clear_highlight(state)
   state.source_window, state.buffer = location.window, location.buffer
   state.position, state.warning, state.overview = position, location.warning, false
-  vim.api.nvim_set_hl(0, "VimgenticTourRange", { default = true, link = "Visual" })
-  state.mark = vim.api.nvim_buf_set_extmark(state.buffer, namespace, location.first - 1, 0, {
-    end_row = location.last, end_col = 0, hl_group = "VimgenticTourRange", hl_eol = true,
-  })
+  if not location.unavailable then
+    vim.api.nvim_set_hl(0, "VimgenticTourRange", { default = true, link = "Visual" })
+    state.mark = vim.api.nvim_buf_set_extmark(state.buffer, namespace, location.first - 1, 0, {
+      end_row = location.last, end_col = 0, hl_group = "VimgenticTourRange", hl_eol = true,
+    })
+  end
   if state.panel_buffer then render(state) end
   install_keys(state)
   state.updating = false

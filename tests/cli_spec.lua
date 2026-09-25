@@ -48,6 +48,12 @@ describe("vimgentic.pi.cli pairing", function()
     end
   end)
 
+  it("passes the selected thinking suffix to both background requests and native chat", function()
+    eq({ "pi", "--mode", "rpc", "--model", "provider/model:high" }, cli.build({ model = "provider/model:high" }))
+    eq({ "pi", "--tui-mode", "fullscreen", "--model", "provider/model:high", "--extension", root .. "/pi/session-log.js" },
+      cli.interactive({ model = "provider/model:high" }))
+  end)
+
   it("rejects a non-boolean pairing option", function()
     local ok, error_message = pcall(config.setup, { pairing = { enabled = "yes" } })
     config.setup()

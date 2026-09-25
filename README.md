@@ -20,7 +20,7 @@ vim.pack.add({
 
 require("vimgentic").setup({
   models = {
-    search = nil, -- provider/model; nil uses pi's default
+    search = nil, -- provider/model[:thinking]; nil uses pi's default
     review = nil,
     tour = nil,
     visual = nil,
@@ -36,6 +36,10 @@ require("vimgentic").setup({
 ```
 
 Model choices made through `pick_model()` persist under `stdpath("data")/vimgentic/models.json` and override setup values.
+
+The picker asks for an operation, a model, and then a thinking level. It queries that model's supported levels through Pi's `get_available_thinking_levels` RPC command, without an agent turn or saved session. The thinking picker shows only levels Pi supports for that model. Higher thinking can take longer and use more tokens. Choose `(pi default)` in the thinking picker to leave thinking to Pi, or in the model picker to leave both choices to Pi.
+
+Choices retain the existing string format, such as `provider/model:high`. They apply independently to search, reviews, tours, visual rewrites, and chat. Cancelling either picker leaves the prior choice unchanged.
 
 ## Suggested keymaps
 
@@ -56,6 +60,7 @@ vim.keymap.set("n", "<leader>9e", vimgentic.explain_error, { desc = "Vimgentic: 
 vim.keymap.set("n", "<leader>9c", vimgentic.chat_toggle, { desc = "Vimgentic: terminal focus" })
 vim.keymap.set("x", "<leader>9c", vimgentic.chat_selection, { desc = "Vimgentic: send selection to chat" })
 vim.keymap.set("n", "<leader>9C", vimgentic.chat_close, { desc = "Vimgentic: hide terminal" })
+vim.keymap.set("n", "<leader>9n", vimgentic.chat_new, { desc = "Vimgentic: new chat" })
 vim.keymap.set("n", "<leader>9h", vimgentic.history, { desc = "Vimgentic: history" })
 vim.keymap.set("n", "<leader>9o", vimgentic.reopen, { desc = "Vimgentic: reopen search" })
 vim.keymap.set("n", "<leader>9x", vimgentic.abort_all, { desc = "Vimgentic: abort" })
@@ -112,14 +117,16 @@ The draft asks for an evidence-based explanation, not an automatic fix. It does 
 
 ### The tour player
 
-Opening a tour moves the editor directly to its first stop. An unmodified, non-floating Oil browser becomes the tour editor instead of remaining as an extra middle pane. Modified Oil buffers keep their window and pending directory edits. The editor highlights the active line range; a panel on the right shows **Step N of M** and that range's explanation. Each arrow step opens the next file or range in the same editor window, moves the highlight, and replaces the side explanation. The player never inserts comments into source files.
+Opening a tour moves the editor directly to its first stop. New tour requests ask for focused steps with **Inputs**, **Walkthrough**, **Decisions and effects**, and **Next** explanations. Each stop should explain its important lines, concrete data flow, and unfamiliar terms. Saved tours keep their original explanations; request a new tour to get the expanded guidance. An unmodified, non-floating Oil browser becomes the tour editor instead of remaining as an extra middle pane. Modified Oil buffers keep their window and pending directory edits. The editor highlights the active line range; a panel on the right shows **Step N of M** and that range's explanation. Each arrow step opens the next file or range in the same editor window, moves the highlight, and replaces the side explanation. The player never inserts comments into source files.
 
 - **Right / Left:** next / previous stop, in normal mode in the tour editor or side panel. Up/Down and insert-mode arrows keep their normal behavior.
 - **Escape:** exit tour mode. `q` in the panel, `tour_close()`, and `:VimgenticTourClose` also exit. Cleanup removes the highlight and restores prior editor mappings.
 - **`g?` in the panel:** toggle the tour overview. Arrow navigation returns to the current step's explanation.
 - **`gq` in the panel:** exit the player and open all tour stops in quickfix.
 
-Tour stops preserve narrative order, including multiple ranges within one file and later returns to that file. `<leader>9j` / `<leader>9k` and `]t` / `[t` in the panel also navigate. Each tab keeps its own active tour; completion of another request does not replace the tour you currently walk. The open command selects the latest completed tour and resumes its previous stop when available. Closing either player window exits tour mode. A tour without usable locations shows its scope question or raw report instead.
+Tour stops preserve narrative order, including multiple ranges within one file and later returns to that file. `<leader>9j` / `<leader>9k` and `]t` / `[t` in the panel also navigate. Each tab keeps its own active tour; completion of another request does not replace the tour you currently walk. The open command selects the latest completed tour and resumes its previous stop when available. After a restart, it restores the latest saved structured tour for the current working directory. If none exists, it opens history filtered to tours from all projects. Closing either player window exits tour mode. A tour without usable locations shows its scope question or raw report instead.
+
+A missing source file does not block the player, including at the first stop. The panel shows that stop's explanation and a warning, without a stale highlight. The source pane stays unchanged, and the next arrow can move to an available stop.
 
 ### Review reports
 
@@ -144,7 +151,7 @@ Reviews use the bundled `review-local` skill and its checklist. Vimgentic explic
 
 Locations retain their source: working tree, editor snapshot, index, or revision. Jumps always open current buffers; they do not reconstruct Git versions or remap old line numbers. Review jumps warn for historical sources or a missing/mismatched source-line anchor; the tour player shows these warnings in its side panel. An anchor match checks one line, not the whole finding. Quickfix labels this limitation; native `:cnext` does not run the extra Enter checks. Check the evidence against current code before acting on a finding.
 
-`models.review` and `models.tour` select independent models; unset values use Pi's default. Both appear in the model picker and session history. Results stay in memory for quick reopening; after a restart, use history's `ctrl-r` to read the saved session response.
+`models.review` and `models.tour` select independent models and thinking levels; unset values use Pi's default. Both appear in the model picker and session history. Results stay in memory for quick reopening. After a restart, open tours directly or use history for either operation. History restores the latest completed structured report, so an ordinary follow-up reply in the same session does not replace it.
 
 ## Local review skill
 
@@ -168,9 +175,11 @@ Then invoke `/skill:review-local` with an explicit target and focus. For example
 
 `chat_toggle()` opens interactive `pi` in one right-hand Neovim terminal window. The terminal gives direct access to Pi's transcript, editor, tools, slash commands, extensions, settings, tree, login, and other native UI features.
 
-Closing the sidebar hides its window but leaves the terminal job alive. Opening it again restores the same process and screen.
+Closing the sidebar hides its window but leaves the terminal job alive. Opening it again restores the same process and screen, even if Neovim's directory changes. `chat_toggle()` starts a chat only when none exists; it never asks to replace a running chat just to show it.
 
-When Neovim's directory differs from the chat directory, the next sidebar open, draft, or active model command asks before switching projects. **Switch project** stops Pi and starts a new chat in Neovim's directory. Saved sessions remain in history, but the switch interrupts any running task and loses unsent terminal input. **Keep current chat** continues the requested action in the existing chat. Cancel leaves the process and its input untouched.
+`chat_new()`, `:VimgenticChatNew`, or `<leader>9n` always requests a fresh chat in Neovim's current directory. Vimgentic keeps one active chat. Replacing an existing chat asks for confirmation because it stops work and discards unsent input. Saved conversations remain in history. Cancel, including Escape, leaves the existing chat unchanged.
+
+When Neovim's directory differs from the chat directory, sending a draft or an active model command still asks before switching projects. **Switch project** stops Pi and starts a new chat in Neovim's directory. Saved sessions remain in history, but the switch interrupts any running task and loses unsent terminal input. **Keep current chat** continues the requested action in the existing chat. Cancel leaves the process and its input untouched.
 
 The bundled extension reports native `/new`, `/fork`, and `/resume` changes to a private per-terminal state file. Vimgentic reads it asynchronously while Pi runs, before chat actions, and after Pi exits. Reopening an exited terminal resumes its latest session, not its startup session. Reports from an earlier terminal process cannot overwrite a newer session selection.
 
@@ -178,24 +187,28 @@ The bundled extension reports native `/new`, `/fork`, and `/resume` changes to a
 - `<leader>9C` hides the sidebar without stopping pi.
 - Escape in the sidebar enters terminal-normal mode; `i` or `a` returns to terminal-insert mode.
 - `q` hides the sidebar from terminal-normal mode.
-- `<leader>9x` sends Ctrl-C to pi and aborts RPC search, review, tour, or visual requests.
-- `chat_selection()` inserts the absolute path, line range, and live selected text through bracketed paste without submitting it.
+- `<leader>9n` requests a new chat, with confirmation before replacement.
+
+`<leader>9x` sends Ctrl-C to pi and aborts RPC search, review, tour, or visual requests. `chat_selection()` inserts the absolute path, line range, and live selected text through bracketed paste without submitting it.
 
 Drafts with terminal control characters are rejected before anything is sent. Newlines and tabs are supported.
 
-Use Pi's native commands such as `/model`, `/thinking`, `/tree`, `/settings`, `/hotkeys`, `/share`, and `/login` directly. The chat choice in `pick_model()` sends Pi's native `/model` command when the terminal runs.
+Use Pi's native commands such as `/model`, `/thinking`, `/tree`, `/settings`, `/hotkeys`, `/share`, and `/login` directly. The chat choice in `pick_model()` sends Pi's native `/model` command when the terminal runs. Leave Pi's input empty before changing a live chat's model; the command shares that input.
 
 ## History
 
 `history()` starts with vimgentic sessions for the current working directory. That list includes sessions the chat terminal switched to with `/new`, `/fork`, or `/resume` inside pi: the bundled `pi/session-log.js` extension appends each session file the terminal runs to `stdpath("data")/vimgentic/session-log.jsonl`, and `history()` folds new entries into the index before it opens.
 
-- `ctrl-p` toggles all projects.
-- `ctrl-a` toggles all pi sessions.
-- `ctrl-r` opens a review report or starts the tour player from the session's last assistant response.
-- `ctrl-q` restores search, review, or tour locations into quickfix.
-- `ctrl-d` confirms and deletes a session with `trash`, when available.
+An empty project still opens the picker, so its filters remain available. Escape cancels rather than hiding a pending selection.
 
-Selecting a session stops the current terminal job before it starts `pi --session <path>` in that session's directory. This does not change Neovim's directory. Session previews show the first user message and the last assistant message.
+- **Enter** opens a review report, starts a tour, restores a search, or resumes a chat, according to the session kind.
+- `ctrl-o` explicitly resumes any session in chat, including a review or tour.
+- `ctrl-r` opens a review report or starts the tour player from its saved structured response.
+- `ctrl-q` restores search, review, or tour locations into quickfix.
+
+Use `ctrl-p` to toggle all projects and `ctrl-a` to toggle all Pi sessions. `ctrl-d` confirms and deletes a session with `trash`, when available.
+
+Resuming a session in chat stops the current terminal job before it starts `pi --session <path>` in that session's directory. This does not change Neovim's directory. Session previews show the first user message and the last assistant message.
 
 Index updates and pruning share an operating-system lock at `stdpath("data")/vimgentic/sessions.json.lock`. Contending instances wait asynchronously for up to five seconds, then report a timeout without writing. The operating system releases the lock if Neovim crashes. The JSON index format stays unchanged. Do not delete the lock file while Neovim runs: its stable identity keeps all instances on the same lock.
 
@@ -203,7 +216,7 @@ Restart every Neovim instance after this update; older plugin instances do not u
 
 ## Commands
 
-Vimgentic defines `:VimgenticSearch`, `:VimgenticVisual`, `:VimgenticVisualPreview`, `:VimgenticPair`, `:VimgenticExplainError`, `:VimgenticChatToggle`, `:VimgenticChatClose`, `:VimgenticHistory`, `:VimgenticOpen`, `:VimgenticAbortAll`, `:VimgenticPickModel`, `:VimgenticLogs`, and `:VimgenticTerminal`.
+Vimgentic defines `:VimgenticSearch`, `:VimgenticVisual`, `:VimgenticVisualPreview`, `:VimgenticPair`, `:VimgenticExplainError`, `:VimgenticChatToggle`, `:VimgenticChatClose`, `:VimgenticChatNew`, `:VimgenticHistory`, `:VimgenticOpen`, `:VimgenticAbortAll`, `:VimgenticPickModel`, `:VimgenticLogs`, and `:VimgenticTerminal`.
 
 Background commands: `:VimgenticReview [prompt]`, `:VimgenticTour [prompt]`, `:VimgenticReviewOpen`, and `:VimgenticTourOpen`. Both start commands accept a line range. Navigation commands: `:VimgenticReviewQuickfix`, `:VimgenticTourNext`, `:VimgenticTourPrev`, and `:VimgenticTourClose`.
 

@@ -73,6 +73,10 @@ function M.chat_toggle()
   require("vimgentic.ops.chat").toggle()
 end
 
+function M.chat_new()
+  require("vimgentic.ops.chat").new_chat()
+end
+
 function M.chat_close()
   require("vimgentic.ops.chat").close()
 end

@@ -1,6 +1,7 @@
 local cli = require("vimgentic.pi.cli")
 local config = require("vimgentic.config")
 local session_state = require("vimgentic.chat.state")
+local select_ui = require("vimgentic.ui.select")
 local util = require("vimgentic.util")
 
 local M = {}
@@ -168,8 +169,14 @@ function Terminal:_handle_exit(token, code)
     self.restart_after_exit = nil
     if restart and not self.shutting_down then
       self.cwd, self.session_path, self.session_id = restart.cwd, restart.path, restart.id
-      self:_replace_buffer()
-      self:_show(restart.callback)
+      local ok, error_message = pcall(function()
+        self:_replace_buffer()
+        self:_show(restart.callback)
+      end)
+      if not ok then
+        if restart.callback then restart.callback(false) end
+        util.notify(tostring(error_message), vim.log.levels.ERROR)
+      end
     end
   end)
 end
@@ -227,7 +234,7 @@ function Terminal:_show(callback)
   if callback then callback(self.job_id ~= nil) end
 end
 
-function Terminal:_with_project(action)
+function Terminal:_with_project(action, reuse_chat)
   if self.action_pending or self.exiting then
     util.notify("A chat switch is already pending; try again after it finishes", vim.log.levels.WARN)
     return false
@@ -245,38 +252,78 @@ function Terminal:_with_project(action)
       finish()
       return false
     end
-    if self.current_cwd() ~= cwd then
+    if not reuse_chat and self.current_cwd() ~= cwd then
       util.notify("The editor directory changed; retry the chat action", vim.log.levels.WARN)
       finish()
       return false
     end
     return true
   end
+  local function run()
+    local ok, error_message = pcall(action, finish, current)
+    if not ok then
+      finish()
+      util.notify(tostring(error_message), vim.log.levels.ERROR)
+    end
+  end
   if not self.job_token and not self.session_path then self.cwd = cwd end
   self:_sync_session(function(error_message)
     if not current() then return end
     if error_message then finish(); return end
-    if self.cwd == cwd then action(finish); return end
-    vim.ui.select({ "Switch project", "Keep current chat", "Cancel" }, {
+    if reuse_chat or self.cwd == cwd then run(); return end
+    local ok, picker_error = pcall(select_ui.open, { "Switch project", "Keep current chat", "Cancel" }, {
       prompt = string.format("Chat uses %s. Switch to %s? This stops Pi and starts a new chat; unsent input is lost.", self.cwd, cwd),
     }, function(choice)
       if not current() then return end
       if choice == "Switch project" then
-        self:_restart({ cwd = cwd, id = cli.session_id() }, function(started)
-          if started then action(finish) else finish() end
+        local restarted, restart_error = pcall(self._restart, self, { cwd = cwd, id = cli.session_id() }, function(started)
+          if started then run() else finish() end
         end)
+        if not restarted then
+          finish()
+          util.notify(tostring(restart_error), vim.log.levels.ERROR)
+        end
       elseif choice == "Keep current chat" then
-        action(finish)
+        run()
       else
         finish()
       end
     end)
+    if not ok then
+      finish()
+      util.notify(tostring(picker_error), vim.log.levels.ERROR)
+    end
   end)
   return true
 end
 
 function Terminal:open()
-  return self:_with_project(function(finish) self:_show(finish) end)
+  return self:_with_project(function(finish) self:_show(finish) end, true)
+end
+
+function Terminal:new_chat()
+  local cwd = self.current_cwd()
+  return self:_with_project(function(finish, current)
+    local function start()
+      if not current() then return end
+      if self.current_cwd() ~= cwd then
+        finish()
+        util.notify("The editor directory changed; retry the chat action", vim.log.levels.WARN)
+        return
+      end
+      local ok, error_message = pcall(self._restart, self, { cwd = cwd, id = cli.session_id() }, finish)
+      if not ok then
+        finish()
+        util.notify(tostring(error_message), vim.log.levels.ERROR)
+      end
+    end
+    if not self.job_id then start(); return end
+    select_ui.open({ "Start new chat", "Cancel" }, {
+      prompt = "Start a new chat? This stops the current task and discards unsent input. Saved sessions remain in history.",
+    }, function(choice)
+      if choice == "Start new chat" then start() else finish() end
+    end)
+  end, true)
 end
 
 function Terminal:focus_editor()
@@ -320,7 +367,11 @@ function Terminal:_restart(target, callback)
     return
   end
   self.restart_after_exit = target
-  self.stop_job(self.job_id)
+  local ok, error_message = pcall(self.stop_job, self.job_id)
+  if not ok then
+    self.restart_after_exit = nil
+    error(error_message, 0)
+  end
 end
 
 function Terminal:switch_session(path, cwd)
@@ -330,7 +381,12 @@ function Terminal:switch_session(path, cwd)
   end
   self.shutting_down = false
   self.action_pending = true
-  self:_restart({ path = path, cwd = cwd or self.cwd }, function() self.action_pending = false end)
+  local ok, error_message = pcall(self._restart, self, { path = path, cwd = cwd or self.cwd }, function() self.action_pending = false end)
+  if not ok then
+    self.action_pending = false
+    util.notify(tostring(error_message), vim.log.levels.ERROR)
+    return false
+  end
   return true
 end
 

@@ -101,9 +101,8 @@ local function open_search(entry)
 end
 
 local function show_history(entries, state)
-  if #entries == 0 then
-    util.notify("No matching pi sessions")
-    return
+  if state.kind then
+    entries = vim.tbl_filter(function(entry) return entry.kind == state.kind end, entries)
   end
   table.sort(entries, function(left, right) return (left.created or 0) > (right.created or 0) end)
   local lines = {}
@@ -117,16 +116,30 @@ local function show_history(entries, state)
     return item_index and entries[item_index] or nil
   end
   require("fzf-lua").fzf_exec(lines, {
-    prompt = "Pi history> ",
+    prompt = state.kind and ("Pi " .. state.kind .. " history> ") or "Pi history> ",
+    no_hide = true,
+    no_resume = true,
     previewer = history_previewer(),
     _vimgentic_entries = entries,
     fzf_opts = {
       ["--delimiter"] = "\t",
       ["--with-nth"] = "1",
-      ["--header"] = "ctrl-p: projects  ctrl-a: all pi  ctrl-r: report  ctrl-q: quickfix  ctrl-d: delete",
+      ["--header"] = (#entries == 0 and "No matching sessions. " or "")
+        .. "enter: open  ctrl-p: projects  ctrl-a: all pi  ctrl-o: chat  ctrl-r: report  ctrl-q: quickfix  ctrl-d: delete",
     },
     actions = {
       ["enter"] = function(selected)
+        local entry = selected_entry(selected)
+        if not entry then return end
+        if entry.kind == "review" or entry.kind == "tour" then
+          require("vimgentic.ops.background").from_history(entry)
+        elseif entry.kind == "search" then
+          open_search(entry)
+        else
+          require("vimgentic.ops.chat").switch_session(entry.path)
+        end
+      end,
+      ["ctrl-o"] = function(selected)
         local entry = selected_entry(selected)
         if entry then require("vimgentic.ops.chat").switch_session(entry.path) end
       end,
@@ -165,7 +178,7 @@ local function show_history(entries, state)
 end
 
 function M.history(state)
-  state = state or { all_projects = false, all_pi = false }
+  state = vim.tbl_extend("force", { all_projects = false, all_pi = false }, state or {})
   local cwd = util.cwd()
   index.sync_from_log(function(sync_error)
     index.report_error(sync_error)
@@ -205,8 +218,11 @@ function M.history(state)
 end
 
 function M.models()
+  models.cancel_pick()
   require("fzf-lua").fzf_exec({ "search", "review", "tour", "visual", "chat" }, {
     prompt = "Vimgentic operation> ",
+    no_hide = true,
+    no_resume = true,
     actions = {
       ["enter"] = function(selected)
         local operation = selected[1]

@@ -2,6 +2,8 @@ local vimgentic = require("vimgentic")
 local oneshot = require("vimgentic.ops.oneshot")
 local prompt_ui = require("vimgentic.ui.prompt")
 local sessions = require("vimgentic.pi.sessions")
+local index = require("vimgentic.pi.index")
+local picker = require("vimgentic.ui.picker")
 local util = require("vimgentic.util")
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 
@@ -17,10 +19,16 @@ local function fixture(callback)
   local buffer = vim.api.nvim_get_current_buf()
   local original_run, original_open = oneshot.run, prompt_ui.open
   local original_notify, original_cwd = util.notify, util.cwd
-  local original_history = sessions.last_assistant
+  local original_history, original_last = sessions.last_report, sessions.last_assistant
+  local original_list, original_picker = index.list, picker.history
   local original_module = package.loaded["vimgentic.ops.background"]
   package.loaded["vimgentic.ops.background"] = nil
-  local state = { cwd = directory, requests = {}, notices = {} }
+  local state = { cwd = directory, requests = {}, notices = {}, saved = {}, pickers = {} }
+  index.list = function(options, callback)
+    state.scope = options
+    callback(nil, state.saved)
+  end
+  picker.history = function(options) table.insert(state.pickers, options) end
   util.cwd = function() return state.cwd end
   util.notify = function(message) table.insert(state.notices, message) end
   oneshot.run = function(options) table.insert(state.requests, options) end
@@ -33,7 +41,8 @@ local function fixture(callback)
   end
   if vim.api.nvim_buf_is_valid(buffer) then vim.api.nvim_buf_delete(buffer, { force = true }) end
   oneshot.run, prompt_ui.open = original_run, original_open
-  util.notify, util.cwd, sessions.last_assistant = original_notify, original_cwd, original_history
+  util.notify, util.cwd, sessions.last_report = original_notify, original_cwd, original_history
+  sessions.last_assistant, index.list, picker.history = original_last, original_list, original_picker
   package.loaded["vimgentic.ops.background"] = original_module
   vim.fn.delete(directory, "rf")
   assert(ok, error_message)
@@ -81,6 +90,9 @@ describe("vimgentic background review and tour", function()
       eq(nil, request.tools)
       truthy(request.prompt:find("not by filename", 1, true))
       truthy(request.prompt:find("full explanation", 1, true))
+      truthy(request.prompt:find("one meaningful decision, transformation, or call per stop", 1, true))
+      truthy(request.prompt:find("Inputs, Walkthrough, Decisions and effects, and Next", 1, true))
+      truthy(request.prompt:find("Define unfamiliar domain terms", 1, true))
       local path = vim.api.nvim_buf_get_name(buffer)
       request.on_result(response("Tour overview", path))
       eq(buffer, vim.api.nvim_get_current_buf())
@@ -120,7 +132,7 @@ describe("vimgentic background review and tour", function()
   it("restoring a tour from another project's history enters the player and the close command exits it", function()
     fixture(function(buffer)
       local path = vim.api.nvim_buf_get_name(buffer)
-      sessions.last_assistant = function(_, callback) callback(nil, response("Saved tour", path)) end
+      sessions.last_report = function(_, callback) callback(nil, response("Saved tour", path)) end
       require("vimgentic.ops.background").from_history({ kind = "tour", cwd = "/original/project", path = "/tour.jsonl", prompt = "Saved request" })
       eq(buffer, vim.api.nvim_get_current_buf())
       eq({ 2, 0 }, vim.api.nvim_win_get_cursor(0))
@@ -209,7 +221,7 @@ describe("vimgentic background review and tour", function()
       local before = state.cwd
       local entry = { kind = "review", cwd = "/original/project", path = "/session.jsonl", prompt = "Review the original code" }
       local requested_path
-      sessions.last_assistant = function(path, callback)
+      sessions.last_report = function(path, callback)
         requested_path = path
         callback(nil, response("Historical evidence and confidence"))
       end
@@ -224,7 +236,7 @@ describe("vimgentic background review and tour", function()
   it("a delayed history read cannot replace a newer report choice", function()
     fixture(function(_, state)
       local pending = {}
-      sessions.last_assistant = function(path, callback) pending[path] = callback end
+      sessions.last_report = function(path, callback) pending[path] = callback end
       local background = require("vimgentic.ops.background")
       background.from_history({ kind = "review", cwd = state.cwd, path = "/older.jsonl" })
       background.from_history({ kind = "tour", cwd = state.cwd, path = "/newer.jsonl" })
@@ -242,7 +254,7 @@ describe("vimgentic background review and tour", function()
       vimgentic.review({ prompt = "Review code.lua" })
       state.requests[1].on_result(response("Latest result"))
       local pending
-      sessions.last_assistant = function(_, callback) pending = callback end
+      sessions.last_report = function(_, callback) pending = callback end
       require("vimgentic.ops.background").from_history({ kind = "review", cwd = state.cwd, path = "/older.jsonl" })
       local chosen = vimgentic.review_open()
       pending(nil, response("Older result"))
@@ -251,9 +263,93 @@ describe("vimgentic background review and tour", function()
     end)
   end)
 
+  it("opening after a restart restores the newest completed tour and skips an unfinished request", function()
+    fixture(function(buffer, state)
+      local path = vim.api.nvim_buf_get_name(buffer)
+      local unfinished, completed = state.cwd .. "/unfinished.jsonl", state.cwd .. "/completed.jsonl"
+      vim.fn.writefile({ vim.json.encode({ type = "message", message = { role = "assistant", content = "Inspecting the code" } }) }, unfinished)
+      vim.fn.writefile({ vim.json.encode({ type = "message", message = { role = "assistant", content = response("Saved tour", path), stopReason = "stop" } }) }, completed)
+      state.saved = {
+        { kind = "tour", path = unfinished, cwd = state.cwd, prompt = "Unfinished tour" },
+        { kind = "tour", path = completed, cwd = state.cwd, prompt = "Completed tour" },
+      }
+      vimgentic.tour_open()
+      wait_for(function() return #vim.api.nvim_tabpage_list_wins(0) == 2 end)
+      eq({ cwd = state.cwd }, state.scope)
+      eq(path, vim.api.nvim_buf_get_name(0))
+      local panel = vimgentic.tour_open()
+      truthy(body(panel):find("Completed tour", 1, true))
+      truthy(body(panel):find("Explain the return", 1, true))
+      eq({}, state.requests)
+      eq({}, state.pickers)
+    end)
+  end)
+
+  it("a fresh background tour takes precedence over an older saved tour that finishes loading later", function()
+    fixture(function(buffer, state)
+      state.saved = { { kind = "tour", path = "/saved.jsonl", cwd = state.cwd, prompt = "Older saved flow" } }
+      local pending
+      sessions.last_report = function(_, callback) pending = callback end
+      vimgentic.tour_open()
+      vimgentic.tour({ prompt = "Newly completed flow" })
+      state.requests[1].on_result(response("Fresh tour", vim.api.nvim_buf_get_name(buffer)))
+      pending(nil, response("Older saved tour", vim.api.nvim_buf_get_name(buffer)))
+      local panel = vimgentic.tour_open()
+      truthy(body(panel):find("Newly completed flow", 1, true))
+      eq(nil, body(panel):find("Older saved flow", 1, true))
+    end)
+  end)
+
+  it("opening without a saved tour for the directory shows tours from all projects", function()
+    fixture(function(buffer, state)
+      vimgentic.tour_open()
+      eq({ { kind = "tour", all_projects = true } }, state.pickers)
+      eq(buffer, vim.api.nvim_get_current_buf())
+      eq({}, state.requests)
+      eq({}, state.notices)
+    end)
+  end)
+
+  it("closing while a saved tour loads prevents a late reply from reopening the player", function()
+    fixture(function(buffer, state)
+      state.saved = { { kind = "tour", path = "/saved.jsonl", cwd = state.cwd } }
+      local pending
+      sessions.last_report = function(_, callback) pending = callback end
+      vimgentic.tour_open()
+      truthy(pending)
+      vimgentic.tour_close()
+      pending(nil, response("Late tour", vim.api.nvim_buf_get_name(buffer)))
+      eq({ vim.api.nvim_get_current_win() }, vim.api.nvim_tabpage_list_wins(0))
+      eq(buffer, vim.api.nvim_get_current_buf())
+    end)
+  end)
+
+  it("changing directories while a saved tour loads leaves the new project untouched", function()
+    fixture(function(buffer, state)
+      state.saved = { { kind = "tour", path = "/saved.jsonl", cwd = state.cwd } }
+      local pending
+      sessions.last_report = function(_, callback) pending = callback end
+      vimgentic.tour_open()
+      state.cwd = "/another/project"
+      pending(nil, response("Old project tour", vim.api.nvim_buf_get_name(buffer)))
+      eq({ vim.api.nvim_get_current_win() }, vim.api.nvim_tabpage_list_wins(0))
+      eq(buffer, vim.api.nvim_get_current_buf())
+      eq({}, state.pickers)
+    end)
+  end)
+
+  it("history without a structured report still shows the original scope question", function()
+    fixture(function(_, state)
+      sessions.last_report = function(_, callback) callback() end
+      sessions.last_assistant = function(_, callback) callback(nil, "Tour needs scope: which flow?") end
+      require("vimgentic.ops.background").from_history({ kind = "tour", cwd = state.cwd, path = "/scope.jsonl" })
+      truthy(body():find("Tour needs scope: which flow?", 1, true))
+    end)
+  end)
+
   it("history read errors leave the editor untouched", function()
     fixture(function(buffer, state)
-      sessions.last_assistant = function(_, callback) callback("session is unavailable") end
+      sessions.last_report = function(_, callback) callback("session is unavailable") end
       require("vimgentic.ops.background").from_history({ kind = "tour", path = "/gone.jsonl" })
       eq(buffer, vim.api.nvim_get_current_buf())
       eq({ "session is unavailable" }, state.notices)

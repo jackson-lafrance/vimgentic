@@ -16,6 +16,15 @@ local function source_window()
   return best
 end
 
+local function target_window(window)
+  local target = window or source_window()
+  if not target then
+    vim.cmd("aboveleft vnew")
+    target = vim.api.nvim_get_current_win()
+  end
+  return target
+end
+
 local function visible_window(result)
   for _, window in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
     if vim.api.nvim_win_get_buf(window) == result.buffer then return window end
@@ -29,18 +38,27 @@ function M.jump(result, position, options)
     util.notify("No location at this position")
     return
   end
+  local function unavailable(message)
+    if options.notify ~= false then util.notify(message, vim.log.levels.WARN) end
+    if not options.allow_missing then return end
+    local target = target_window(options.window)
+    vim.api.nvim_set_current_win(target)
+    result.position = position
+    return {
+      window = target, buffer = vim.api.nvim_win_get_buf(target), unavailable = true,
+      warning = message .. " The source pane is unchanged; continue to the next stop.",
+    }
+  end
   local buffer = vim.fn.bufnr(location.path)
   if buffer < 0 or not vim.api.nvim_buf_is_loaded(buffer) then
     local stat = vim.uv.fs_stat(location.path)
     if not stat or stat.type ~= "file" then
-      util.notify("Location is unavailable in the working tree: " .. location.path, vim.log.levels.WARN)
-      return
+      return unavailable("Location is unavailable in the working tree: " .. location.path)
     end
     buffer = vim.fn.bufadd(location.path)
     local loaded, load_error = pcall(vim.fn.bufload, buffer)
     if not loaded then
-      util.notify(tostring(load_error), vim.log.levels.ERROR)
-      return
+      return unavailable(tostring(load_error))
     end
   end
   local row = math.min(location.lnum, vim.api.nvim_buf_line_count(buffer))
@@ -52,11 +70,7 @@ function M.jump(result, position, options)
     warning = "Location may be stale; check the current code against the report."
   end
   if warning and options.notify ~= false then util.notify(warning, vim.log.levels.WARN) end
-  local target = options.window or source_window()
-  if not target then
-    vim.cmd("aboveleft vnew")
-    target = vim.api.nvim_get_current_win()
-  end
+  local target = target_window(options.window)
   local changed, change_error = pcall(vim.api.nvim_win_set_buf, target, buffer)
   if not changed then
     util.notify(tostring(change_error), vim.log.levels.ERROR)

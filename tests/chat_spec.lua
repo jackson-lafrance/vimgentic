@@ -18,6 +18,7 @@ local function fixture(callback)
       switch_session = function(_, session_path, cwd)
         table.insert(state.switches, { path = session_path, cwd = cwd, fast_event = vim.in_fast_event() })
       end,
+      new_chat = function() state.new_chat = true end,
       close = function() state.closed = true end,
       shutdown = function() state.stopped = true end,
     }
@@ -81,6 +82,23 @@ describe("vimgentic.ops.chat history", function()
       vim.schedule(function() drained = true end)
       wait_for(function() return drained end)
       eq(true, state.closed)
+      eq({}, state.switches)
+    end)
+  end)
+
+  it("the new-chat command cancels an earlier pending history selection", function()
+    fixture(function(_, state)
+      local respond
+      sessions.read_metadata = function(_, callback) respond = callback end
+      require("vimgentic.ops.chat").switch_session("/sessions/selected.jsonl")
+      local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
+      dofile(root .. "/plugin/vimgentic.lua")
+      vim.cmd("VimgenticChatNew")
+      respond(nil, { cwd = "/old-project" })
+      local drained = false
+      vim.schedule(function() drained = true end)
+      wait_for(function() return drained end)
+      eq(true, state.new_chat)
       eq({}, state.switches)
     end)
   end)

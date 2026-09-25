@@ -23,6 +23,11 @@ function Chat:toggle()
   self.terminal_sidebar:focus_flip()
 end
 
+function Chat:new_chat()
+  self.history_token = self.history_token + 1
+  self.terminal_sidebar:new_chat()
+end
+
 function Chat:close()
   self.history_token = self.history_token + 1
   self.terminal_sidebar:close()
@@ -71,6 +76,7 @@ local function get()
 end
 
 function M.toggle() get():toggle() end
+function M.new_chat() get():new_chat() end
 function M.close() get():close() end
 function M.abort() if instance then instance:abort() end end
 function M.switch_session(path) get():switch_session(path) end
