@@ -1,4 +1,5 @@
 local util = require("vimgentic.util")
+local parse = require("vimgentic.parse")
 
 local M = {}
 local chunk_size = 65536
@@ -114,7 +115,11 @@ local function assistant_text(entry)
   if not entry or entry.type ~= "message" or not entry.message or entry.message.role ~= "assistant" then
     return nil
   end
-  return util.message_text(entry.message.content)
+  local content = entry.message.content
+  if type(content) == "table" then
+    content = vim.tbl_filter(function(block) return block.type == "text" end, content)
+  end
+  return util.message_text(content)
 end
 
 function M.last_assistant(path, callback)
@@ -129,6 +134,23 @@ function M.last_assistant(path, callback)
       vim.schedule(function()
         callback(read_error, assistant_text(entry))
       end)
+    end)
+  end)
+end
+
+function M.last_report(path, callback)
+  with_stat(path, function(stat_error, stat)
+    if stat_error then
+      vim.schedule(function() callback(stat_error) end)
+      return
+    end
+    find_from_end(path, stat, function(entry)
+      local text = assistant_text(entry)
+      if not text or (entry.message.stopReason and entry.message.stopReason ~= "stop") then return false end
+      local _, structured = parse.report(text)
+      return structured
+    end, function(read_error, entry)
+      vim.schedule(function() callback(read_error, assistant_text(entry)) end)
     end)
   end)
 end
@@ -196,6 +218,11 @@ local function read_metadata(path, callback)
       callback(stat_error)
       return
     end
+    local stamp = string.format("%s:%s:%s", stat.size, stat.mtime.sec, stat.mtime.nsec)
+    if cache[path] and cache[path].stamp == stamp then
+      callback(nil, vim.deepcopy(cache[path].metadata))
+      return
+    end
     local header
     local session_info
     local remaining = 2
@@ -210,7 +237,7 @@ local function read_metadata(path, callback)
         callback(first_error or "session header missing")
         return
       end
-      callback(nil, {
+      local metadata = {
         path = path,
         kind = "pi",
         cwd = header.cwd,
@@ -218,7 +245,9 @@ local function read_metadata(path, callback)
         name = session_info and session_info.name or nil,
         created = timestamp_seconds(header.timestamp, stat.mtime.sec),
         session_id = header.id,
-      })
+      }
+      cache[path] = { stamp = stamp, metadata = vim.deepcopy(metadata) }
+      callback(nil, metadata)
     end
     find_from_start(path, stat, function(entry)
       return entry and entry.type == "session"
@@ -346,13 +375,8 @@ function M.list(options, callback)
   local scope_path = options.all_projects and session_root() or cwd_directory(cwd)
   vim.uv.fs_stat(scope_path, function(stat_error, stat)
     if stat_error or not stat then
-      vim.schedule(function() callback(stat_error, {}) end)
-      return
-    end
-    local cache_key = scope_path
-    local mtime = tostring(stat.mtime.sec) .. ":" .. tostring(stat.mtime.nsec)
-    if cache[cache_key] and cache[cache_key].mtime == mtime then
-      vim.schedule(function() callback(nil, vim.deepcopy(cache[cache_key].entries)) end)
+      local error_message = stat_error and not tostring(stat_error):match("ENOENT") and stat_error or nil
+      vim.schedule(function() callback(error_message, {}) end)
       return
     end
     local function directories_done(directory_error, directories)
@@ -369,7 +393,6 @@ function M.list(options, callback)
           if not options.all_projects then
             entries = vim.tbl_filter(function(entry) return entry.cwd == cwd end, entries)
           end
-          cache[cache_key] = { mtime = mtime, entries = vim.deepcopy(entries) }
           vim.schedule(function() callback(metadata_error, entries) end)
         end)
       end)

@@ -33,13 +33,14 @@ local function agent_error(event)
 end
 
 function M.run(options)
-  local cwd = util.cwd()
+  local cwd = options.cwd or util.cwd()
   local request_id = log.request(options.kind, options.user_prompt)
   local client = rpc.new({
     argv = cli.build({
       model = models.get(options.kind),
       name = options.name,
       tools = options.tools,
+      skill_path = options.skill and options.skill.path,
     }),
     cwd = cwd,
     log_id = request_id,
@@ -83,6 +84,7 @@ function M.run(options)
   end
 
   unsubscribe = client:on_event(function(event)
+    if request.done then return end
     if event.type == "tool_execution_start" then
       local summary = tool_summary(event)
       options.status:set_activity(util.truncate(summary, 120))
@@ -105,6 +107,14 @@ function M.run(options)
       log.append(request_id, "retry", event.errorMessage or "")
     elseif event.type == "extension_error" then
       log.append(request_id, "extension_error", event.error or "")
+      if options.skill and event.event == "skill_expansion" then
+        finish(nil, event.error or "Pi could not expand the review skill")
+      end
+    elseif event.type == "extension_ui_request" and options.background then
+      if vim.tbl_contains({ "select", "confirm", "input", "editor" }, event.method) then
+        client:write({ type = "extension_ui_response", id = event.id, cancelled = true })
+        finish(nil, "Background " .. options.kind .. " needs interactive input: " .. (event.title or event.method))
+      end
     elseif event.type == "process_exit" and not request.done then
       local stderr = event.stderr or ""
       local message = stderr ~= "" and stderr or string.format("pi RPC process exited with code %s", tostring(event.code))
@@ -126,11 +136,37 @@ function M.run(options)
     index.add(entry, index.report_error)
   end)
 
-  client:send({ type = "prompt", message = options.prompt }, function(response)
-    if not response.success then
-      finish(nil, response.error or "pi rejected the prompt")
-    end
-  end)
+  local function submit()
+    if request.done then return end
+    client:send({ type = "prompt", message = options.prompt }, function(response)
+      if not response.success then
+        finish(nil, response.error or "pi rejected the prompt")
+      end
+    end)
+  end
+
+  if options.skill then
+    client:send({ type = "get_commands" }, function(response)
+      if request.done then return end
+      if not response.success then
+        finish(nil, response.error or "Could not check pi's skills")
+        return
+      end
+      for _, command in ipairs(response.data and response.data.commands or {}) do
+        if command.name == "skill:" .. options.skill.name then
+          local path = command.sourceInfo and command.sourceInfo.path or command.path
+          if command.source == "skill" and path == options.skill.path then
+            submit()
+            return
+          end
+          break
+        end
+      end
+      finish(nil, "Pi did not load the bundled skill " .. options.skill.path .. "; check skill name collisions and :VimgenticLogs")
+    end)
+  else
+    submit()
+  end
 
   vim.defer_fn(function()
     if request.done then

@@ -11,60 +11,25 @@ Chat.__index = Chat
 local instance
 
 function Chat.new()
-  local self = setmetatable({ registration_token = 0 }, Chat)
+  local self = setmetatable({ history_token = 0 }, Chat)
   self.terminal_sidebar = Terminal.new({
     model = models.get("chat"),
-    on_start = function(path, session_id) self:_register(path, session_id) end,
+    on_session = function() index.sync_from_log(index.report_error) end,
   })
   return self
-end
-
-function Chat:_add_to_index(path)
-  index.add({
-    path = path,
-    kind = "chat",
-    cwd = util.cwd(),
-    prompt = "chat: " .. util.basename(util.cwd()),
-  }, index.report_error)
-end
-
-function Chat:_register(path, session_id)
-  self.registration_token = self.registration_token + 1
-  local token = self.registration_token
-  if path then
-    self:_add_to_index(path)
-    return
-  end
-  local function find_session()
-    if token ~= self.registration_token or not session_id then
-      return
-    end
-    sessions.find_by_id(util.cwd(), session_id, function(error_message, found)
-      if token ~= self.registration_token then
-        return
-      end
-      if error_message then
-        index.report_error(error_message)
-        return
-      end
-      if found then
-        self.terminal_sidebar.session_path = found
-        self:_add_to_index(found)
-        return
-      end
-      if self.terminal_sidebar.job_id then
-        vim.defer_fn(find_session, 1000)
-      end
-    end)
-  end
-  find_session()
 end
 
 function Chat:toggle()
   self.terminal_sidebar:focus_flip()
 end
 
+function Chat:new_chat()
+  self.history_token = self.history_token + 1
+  self.terminal_sidebar:new_chat()
+end
+
 function Chat:close()
+  self.history_token = self.history_token + 1
   self.terminal_sidebar:close()
 end
 
@@ -73,7 +38,18 @@ function Chat:abort()
 end
 
 function Chat:switch_session(path)
-  self.terminal_sidebar:switch_session(path)
+  self.history_token = self.history_token + 1
+  local token = self.history_token
+  sessions.read_metadata(path, function(error_message, metadata)
+    vim.schedule(function()
+      if token ~= self.history_token then return end
+      if error_message or not metadata or type(metadata.cwd) ~= "string" or metadata.cwd == "" then
+        util.notify(error_message or "Could not read pi session: " .. path, vim.log.levels.ERROR)
+        return
+      end
+      self.terminal_sidebar:switch_session(path, metadata.cwd)
+    end)
+  end)
 end
 
 function Chat:set_model(model)
@@ -90,6 +66,7 @@ function Chat:selection_to_input()
 end
 
 function Chat:shutdown()
+  self.history_token = self.history_token + 1
   self.terminal_sidebar:shutdown()
 end
 
@@ -99,6 +76,7 @@ local function get()
 end
 
 function M.toggle() get():toggle() end
+function M.new_chat() get():new_chat() end
 function M.close() get():close() end
 function M.abort() if instance then instance:abort() end end
 function M.switch_session(path) get():switch_session(path) end

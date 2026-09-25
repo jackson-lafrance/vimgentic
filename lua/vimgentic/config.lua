@@ -3,6 +3,8 @@ local M = {}
 local defaults = {
   models = {
     search = nil,
+    review = nil,
+    tour = nil,
     visual = nil,
     chat = nil,
   },
@@ -34,7 +36,7 @@ local function check_model(name, value)
 end
 
 local function validate(config)
-  for _, kind in ipairs({ "search", "visual", "chat" }) do
+  for _, kind in ipairs({ "search", "review", "tour", "visual", "chat" }) do
     check_model(kind, config.models[kind])
   end
   if type(config.chat.width) ~= "number" or config.chat.width <= 0 or config.chat.width >= 1 then

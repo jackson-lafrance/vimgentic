@@ -7,7 +7,7 @@ Status.__index = Status
 
 function Status:_text()
   local activity = self.activity and self.activity ~= "" and ("  " .. self.activity) or ""
-  return frames[self.frame] .. " vimgentic" .. activity
+  return frames[self.frame] .. " vimgentic" .. (self.label and (" " .. self.label) or "") .. activity
 end
 
 function Status:_draw()
@@ -91,8 +91,8 @@ local function start(status)
   return status
 end
 
-function M.command()
-  return start(setmetatable({ kind = "command", stopped = false }, Status))
+function M.command(label)
+  return start(setmetatable({ kind = "command", label = label, stopped = false }, Status))
 end
 
 function M.range(buffer, start_line, end_line)

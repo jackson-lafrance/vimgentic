@@ -28,6 +28,32 @@ describe("vimgentic.pi.cli pairing", function()
     eq({ "pi", "--tui-mode", "fullscreen", "--extension", root .. "/pi/session-log.js" }, cli.interactive())
   end)
 
+  it("explicitly loads the bundled review skill without disabling normal tools or other skills", function()
+    local skill_path = cli.skill_path("review-local")
+    eq(root .. "/skills/review-local/SKILL.md", skill_path)
+    eq({ "pi", "--mode", "rpc", "--skill", skill_path }, cli.build({ skill_path = skill_path }))
+    eq("file", assert(vim.uv.fs_stat(skill_path)).type)
+    eq({ "pi", "--mode", "rpc" }, cli.build())
+  end)
+
+  it("accepts review and tour models and rejects invalid values", function()
+    local values = config.setup({ models = { review = "provider/reviewer", tour = "provider/guide" } })
+    eq("provider/reviewer", values.models.review)
+    eq("provider/guide", values.models.tour)
+    for _, kind in ipairs({ "review", "tour" }) do
+      local ok, error_message = pcall(config.setup, { models = { [kind] = false } })
+      config.setup()
+      eq(false, ok)
+      truthy(error_message:find("vimgentic: models." .. kind .. " must be a non-empty string or nil", 1, true))
+    end
+  end)
+
+  it("passes the selected thinking suffix to both background requests and native chat", function()
+    eq({ "pi", "--mode", "rpc", "--model", "provider/model:high" }, cli.build({ model = "provider/model:high" }))
+    eq({ "pi", "--tui-mode", "fullscreen", "--model", "provider/model:high", "--extension", root .. "/pi/session-log.js" },
+      cli.interactive({ model = "provider/model:high" }))
+  end)
+
   it("rejects a non-boolean pairing option", function()
     local ok, error_message = pcall(config.setup, { pairing = { enabled = "yes" } })
     config.setup()
