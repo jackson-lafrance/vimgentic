@@ -76,6 +76,7 @@ local function get()
 end
 
 function M.toggle() get():toggle() end
+function M.toggle_follow() return get().terminal_sidebar:toggle_follow() end
 function M.new_chat() get():new_chat() end
 function M.close() get():close() end
 function M.abort() if instance then instance:abort() end end

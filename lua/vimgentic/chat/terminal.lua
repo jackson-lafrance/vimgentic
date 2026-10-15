@@ -1,5 +1,6 @@
 local cli = require("vimgentic.pi.cli")
 local config = require("vimgentic.config")
+local Follow = require("vimgentic.chat.follow").Follow
 local session_state = require("vimgentic.chat.state")
 local select_ui = require("vimgentic.ui.select")
 local util = require("vimgentic.util")
@@ -34,7 +35,7 @@ end
 
 function Terminal.new(options)
   options = options or {}
-  return setmetatable({
+  local self = setmetatable({
     cwd = options.cwd or util.cwd(),
     current_cwd = options.current_cwd or util.cwd,
     read_state = options.read_state or session_state.read,
@@ -51,6 +52,13 @@ function Terminal.new(options)
     start_job = options.start_job or default_start,
     stop_job = options.stop_job or default_stop,
   }, Terminal)
+  self.follow = Follow.new({
+    enabled = config.get().chat.follow,
+    editor_window = function()
+      if valid_window(self.window) and self:is_sidebar(self.window) then return self.previous_window end
+    end,
+  })
+  return self
 end
 
 function Terminal:_create_buffer()
@@ -162,6 +170,7 @@ function Terminal:_handle_exit(token, code)
   self.exit_code = code
   self.exiting = true
   self:_stop_watcher()
+  self.follow:stop()
   self:_sync_session(function()
     if token ~= self.job_token then return end
     self.exiting = false
@@ -203,6 +212,8 @@ function Terminal:_start()
     VIMGENTIC_SESSION_LOG = self.session_log,
     VIMGENTIC_SESSION_STATE = self.session_state,
     VIMGENTIC_SESSION_TOKEN = tostring(token),
+    VIMGENTIC_FOLLOW_CONTROL = self.follow.control_path,
+    VIMGENTIC_FOLLOW_REQUEST = self.follow.request_path,
   }
   local command = self:command()
   local ok, job_id = pcall(self.start_job, self.buffer, command, self.cwd, function(code)
@@ -215,6 +226,11 @@ function Terminal:_start()
   end
   self.job_id = job_id
   self.exit_code = nil
+  local following, follow_error = pcall(self.follow.start, self.follow)
+  if not following then
+    self.follow:stop()
+    util.notify("Could not start Pi follow: " .. tostring(follow_error), vim.log.levels.WARN)
+  end
   self:_stop_watcher()
   self.state_watcher = vim.uv.new_fs_poll()
   self.state_watcher:start(self.session_state, 250, function(error_message)
@@ -230,6 +246,7 @@ end
 function Terminal:_show(callback)
   self:_open_window()
   self:_start()
+  self.follow:set_visible(true)
   if self.enter_insert and self.job_id then vim.cmd("startinsert") end
   if callback then callback(self.job_id ~= nil) end
 end
@@ -350,7 +367,12 @@ function Terminal:focus_flip()
   end
 end
 
+function Terminal:toggle_follow()
+  return self.follow:toggle()
+end
+
 function Terminal:close()
+  self.follow:set_visible(false)
   self:_remember_editor()
   if valid_window(self.window) then
     vim.api.nvim_win_close(self.window, true)
@@ -423,6 +445,7 @@ function Terminal:shutdown()
   self.action_serial = (self.action_serial or 0) + 1
   self.action_pending = false
   self:_stop_watcher()
+  self.follow:stop()
   self.restart_after_exit = nil
   if self.job_id then
     self.stop_job(self.job_id)

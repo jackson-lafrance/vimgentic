@@ -19,6 +19,7 @@ local function fixture(callback)
         table.insert(state.switches, { path = session_path, cwd = cwd, fast_event = vim.in_fast_event() })
       end,
       new_chat = function() state.new_chat = true end,
+      toggle_follow = function() state.follow = not state.follow; return state.follow end,
       close = function() state.closed = true end,
       shutdown = function() state.stopped = true end,
     }
@@ -99,6 +100,19 @@ describe("vimgentic.ops.chat history", function()
       vim.schedule(function() drained = true end)
       wait_for(function() return drained end)
       eq(true, state.new_chat)
+      eq({}, state.switches)
+    end)
+  end)
+
+  it("the follow command reaches the active terminal without starting another chat", function()
+    fixture(function(chat, state)
+      local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
+      dofile(root .. "/plugin/vimgentic.lua")
+      vim.cmd("VimgenticChatFollowToggle")
+      eq(true, state.follow)
+      eq(false, require("vimgentic").chat_follow_toggle())
+      eq(false, state.follow)
+      eq(nil, state.new_chat)
       eq({}, state.switches)
     end)
   end)

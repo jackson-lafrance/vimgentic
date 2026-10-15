@@ -28,6 +28,7 @@ require("vimgentic").setup({
   },
   chat = {
     width = 0.45,
+    follow = false, -- opt in to agent-chosen file navigation
   },
   pairing = {
     enabled = false, -- opt in to intent-based guidance for native chat sessions
@@ -61,6 +62,7 @@ vim.keymap.set("n", "<leader>9c", vimgentic.chat_toggle, { desc = "Vimgentic: te
 vim.keymap.set("x", "<leader>9c", vimgentic.chat_selection, { desc = "Vimgentic: send selection to chat" })
 vim.keymap.set("n", "<leader>9C", vimgentic.chat_close, { desc = "Vimgentic: hide terminal" })
 vim.keymap.set("n", "<leader>9n", vimgentic.chat_new, { desc = "Vimgentic: new chat" })
+vim.keymap.set("n", "<leader>9f", vimgentic.chat_follow_toggle, { desc = "Vimgentic: toggle follow Pi" })
 vim.keymap.set("n", "<leader>9h", vimgentic.history, { desc = "Vimgentic: history" })
 vim.keymap.set("n", "<leader>9o", vimgentic.reopen, { desc = "Vimgentic: reopen search" })
 vim.keymap.set("n", "<leader>9x", vimgentic.abort_all, { desc = "Vimgentic: abort" })
@@ -195,6 +197,16 @@ Drafts with terminal control characters are rejected before anything is sent. Ne
 
 Use Pi's native commands such as `/model`, `/thinking`, `/tree`, `/settings`, `/hotkeys`, `/share`, and `/login` directly. The chat choice in `pick_model()` sends Pi's native `/model` command when the terminal runs. Leave Pi's input empty before changing a live chat's model; the command shares that input.
 
+### Follow Pi in the editor
+
+`chat_follow_toggle()`, `:VimgenticChatFollowToggle`, or the suggested `<leader>9f` toggles follow mode without restarting Pi or submitting a prompt. It starts off unless `chat.follow = true`. The toggle lasts for this Neovim instance, including chat restarts and session switches. In the terminal, press Escape before the normal-mode shortcut.
+
+When follow is on, the bundled `pi/follow.js` extension asks Pi to decide after each successful `read`, `edit`, or `write` whether that file helps explain the current task. Pi calls `vimgentic_show_file` with a path and line only when it chooses to show something. It skips incidental lookups and repeated context. This uses the chat model’s judgment, not a separate classifier or automatic navigation on every file operation. Nested file tools through codemode participate too; shell commands and third-party file tools are not parsed.
+
+The editor opens the chosen file beside chat without taking keyboard focus. It skips navigation when either the current editor buffer or the target buffer has unsaved changes. Special buffers, floating windows, other tabs, and missing files stay untouched. Unmodified buffers reload disk changes. Hiding chat pauses follow; reopening resumes it. Turning follow off takes effect immediately. Turning it on during a task reaches Pi through the next file-tool result. Old requests do not replay after a toggle, sidebar reopen, or process restart; rapid choices coalesce to the latest file.
+
+Navigation uses private per-terminal JSON files, not shell commands or remote editor commands. Follow never changes edit permissions or applies buffer edits. Pi’s existing tools retain their normal permissions. Restart Neovim and the chat process once after installing this extension; hiding an older chat does not load it.
+
 ## History
 
 `history()` starts with vimgentic sessions for the current working directory. That list includes sessions the chat terminal switched to with `/new`, `/fork`, or `/resume` inside pi: the bundled `pi/session-log.js` extension appends each session file the terminal runs to `stdpath("data")/vimgentic/session-log.jsonl`, and `history()` folds new entries into the index before it opens.
@@ -216,7 +228,7 @@ Restart every Neovim instance after this update; older plugin instances do not u
 
 ## Commands
 
-Vimgentic defines `:VimgenticSearch`, `:VimgenticVisual`, `:VimgenticVisualPreview`, `:VimgenticPair`, `:VimgenticExplainError`, `:VimgenticChatToggle`, `:VimgenticChatClose`, `:VimgenticChatNew`, `:VimgenticHistory`, `:VimgenticOpen`, `:VimgenticAbortAll`, `:VimgenticPickModel`, `:VimgenticLogs`, and `:VimgenticTerminal`.
+Vimgentic defines `:VimgenticSearch`, `:VimgenticVisual`, `:VimgenticVisualPreview`, `:VimgenticPair`, `:VimgenticExplainError`, `:VimgenticChatToggle`, `:VimgenticChatClose`, `:VimgenticChatNew`, `:VimgenticChatFollowToggle`, `:VimgenticHistory`, `:VimgenticOpen`, `:VimgenticAbortAll`, `:VimgenticPickModel`, `:VimgenticLogs`, and `:VimgenticTerminal`.
 
 Background commands: `:VimgenticReview [prompt]`, `:VimgenticTour [prompt]`, `:VimgenticReviewOpen`, and `:VimgenticTourOpen`. Both start commands accept a line range. Navigation commands: `:VimgenticReviewQuickfix`, `:VimgenticTourNext`, `:VimgenticTourPrev`, and `:VimgenticTourClose`.
 
@@ -228,7 +240,7 @@ Background commands: `:VimgenticReview [prompt]`, `:VimgenticTour [prompt]`, `:V
 make test
 ```
 
-The Lua suite runs with `nvim -l tests/run.lua`, including concurrent Neovim writers and lock recovery after a killed process. Extension tests run with `node --test tests/session_log_spec.js`. Neither suite needs plugin dependencies or a model connection.
+The Lua suite runs with `nvim -l tests/run.lua`, including concurrent Neovim writers and lock recovery after a killed process. Extension tests run with `node --test tests/*_spec.js`. Neither suite needs plugin dependencies or a model connection.
 
 ## License
 

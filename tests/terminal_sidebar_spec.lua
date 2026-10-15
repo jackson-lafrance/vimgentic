@@ -386,7 +386,7 @@ end)
 
 describe("vimgentic.chat.terminal", function()
   it("builds an interactive pi command without RPC mode", function()
-    eq({ "pi", "--tui-mode", "fullscreen", "--model", "provider/model", "--session", "/tmp/session.jsonl", "--extension", root .. "/pi/session-log.js" }, cli.interactive({
+    eq({ "pi", "--tui-mode", "fullscreen", "--model", "provider/model", "--session", "/tmp/session.jsonl", "--extension", root .. "/pi/session-log.js", "--extension", root .. "/pi/follow.js" }, cli.interactive({
       model = "provider/model",
       session_path = "/tmp/session.jsonl",
     }))
@@ -411,7 +411,7 @@ describe("vimgentic.chat.terminal", function()
     sidebar:switch_session("/tmp/selected.jsonl")
     eq({ 1 }, stops)
     eq(2, #starts)
-    eq({ "pi", "--tui-mode", "fullscreen", "--model", "provider/model", "--session", "/tmp/selected.jsonl", "--extension", root .. "/pi/session-log.js" }, starts[2].command)
+    eq({ "pi", "--tui-mode", "fullscreen", "--model", "provider/model", "--session", "/tmp/selected.jsonl", "--extension", root .. "/pi/session-log.js", "--extension", root .. "/pi/follow.js" }, starts[2].command)
     cleanup(sidebar)
   end)
 
@@ -474,6 +474,46 @@ describe("vimgentic.chat.terminal", function()
     cleanup(sidebar)
   end)
 
+  it("the follow toggle changes live state without restarting Pi or sending chat input", function()
+    project_fixture(function(state)
+      state.sidebar:open()
+      local function control()
+        return vim.json.decode(table.concat(vim.fn.readfile(state.starts[1].env.VIMGENTIC_FOLLOW_CONTROL), "\n"))
+      end
+      eq(false, control().enabled)
+      eq(true, state.sidebar:toggle_follow())
+      eq(true, control().enabled)
+      local token = control().token
+      state.sidebar:close()
+      eq(false, control().enabled)
+      truthy(control().token ~= token)
+      state.sidebar:open()
+      eq(true, control().enabled)
+      eq(1, #state.starts)
+      eq({}, state.stops)
+      eq({}, state.sends)
+      eq(false, state.sidebar:toggle_follow())
+      eq(false, control().enabled)
+    end)
+  end)
+
+  it("follow stays enabled across chat process restarts and shutdown removes the bridge", function()
+    project_fixture(function(state)
+      state.sidebar:toggle_follow()
+      state.sidebar:open()
+      local path = state.starts[1].env.VIMGENTIC_FOLLOW_CONTROL
+      local token = vim.json.decode(table.concat(vim.fn.readfile(path), "\n")).token
+      state.sidebar:switch_session("/tmp/selected.jsonl")
+      eq(2, #state.starts)
+      local control = vim.json.decode(table.concat(vim.fn.readfile(path), "\n"))
+      eq(true, control.enabled)
+      truthy(control.token ~= token)
+      state.sidebar:shutdown()
+      eq(nil, vim.uv.fs_stat(path))
+      eq({}, state.sends)
+    end)
+  end)
+
   it("passes the session log path to the pi process environment", function()
     local seen_env = nil
     local sidebar = Terminal.new({
@@ -492,6 +532,8 @@ describe("vimgentic.chat.terminal", function()
       VIMGENTIC_SESSION_LOG = "/tmp/vimgentic-tests/session-log.jsonl",
       VIMGENTIC_SESSION_STATE = sidebar.session_state,
       VIMGENTIC_SESSION_TOKEN = "1",
+      VIMGENTIC_FOLLOW_CONTROL = sidebar.follow.control_path,
+      VIMGENTIC_FOLLOW_REQUEST = sidebar.follow.request_path,
     }, seen_env)
     cleanup(sidebar)
   end)

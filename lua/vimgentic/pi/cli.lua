@@ -31,7 +31,7 @@ end
 
 function M.interactive(options)
   local command = add_options({ config.get().pi.command, "--tui-mode", "fullscreen" }, options or {})
-  vim.list_extend(command, { "--extension", plugin_root .. "/pi/session-log.js" })
+  vim.list_extend(command, { "--extension", plugin_root .. "/pi/session-log.js", "--extension", plugin_root .. "/pi/follow.js" })
   if config.get().pairing.enabled then
     vim.list_extend(command, { "--extension", plugin_root .. "/pi/pairing.js" })
   end

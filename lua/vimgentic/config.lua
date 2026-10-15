@@ -11,6 +11,7 @@ local defaults = {
   chat = {
     width = 0.45,
     min_width = 60,
+    follow = false,
   },
   pi = {
     command = "pi",
@@ -44,6 +45,9 @@ local function validate(config)
   end
   if type(config.chat.min_width) ~= "number" or config.chat.min_width < 20 then
     error("vimgentic: chat.min_width must be at least 20")
+  end
+  if type(config.chat.follow) ~= "boolean" then
+    error("vimgentic: chat.follow must be a boolean")
   end
   if type(config.pi.command) ~= "string" or config.pi.command == "" then
     error("vimgentic: pi.command must be a non-empty string")
