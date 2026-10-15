@@ -25,7 +25,8 @@ async function fixture(callback) {
     toolName, input: { path }, content: [{ type: "text", text: "original result" }], isError: false, ...extra,
   });
   const result = (value = event()) => handlers.tool_result(value, ctx);
-  const show = (path = "app.lua", line = 8) => tool.execute("call-id", { path, line }, undefined, undefined, ctx);
+  const show = (path = "app.lua", line = 8, reason = "This function connects the caller to the implementation.") =>
+    tool.execute("call-id", { path, line, reason }, undefined, undefined, ctx);
   try {
     await callback({ directory, controlPath, requestPath, state, event, result, show, handlers, tool });
   } finally {
@@ -92,14 +93,19 @@ test("an explicit Pi choice queues the absolute path and line with the current g
     const output = await show();
     assert.equal(output.isError, false);
     assert.match(output.content[0].text, /Navigation requested/);
-    const request = JSON.parse(readFileSync(requestPath, "utf8"));
+    const report = JSON.parse(readFileSync(requestPath, "utf8"));
+    assert.equal(report.done, false);
+    assert.equal(typeof report.run, "string");
+    assert.notEqual(report.run, "");
+    const request = report.request;
     assert.deepEqual({ ...request, id: "id" }, {
       path: join(directory, "app.lua"), line: 8, token: "current-generation", id: "id",
+      reason: "This function connects the caller to the implementation.",
     });
     assert.equal(typeof request.id, "string");
     assert.equal(statSync(requestPath).mode & 0o777, 0o600);
     await show("app.lua", 2);
-    const next = JSON.parse(readFileSync(requestPath, "utf8"));
+    const next = JSON.parse(readFileSync(requestPath, "utf8")).request;
     assert.equal(next.line, 2);
     assert.notEqual(next.id, request.id);
   });
@@ -170,7 +176,7 @@ test("relative and home paths resolve against the tool context rather than the p
     assert.equal((await show(join(directory, "app.lua"))).isError, false);
     result(event("read", "~/app.lua"));
     await show("~/app.lua");
-    assert.equal(JSON.parse(readFileSync(requestPath, "utf8")).path, join(homedir(), "app.lua"));
+    assert.equal(JSON.parse(readFileSync(requestPath, "utf8")).request.path, join(homedir(), "app.lua"));
   });
 });
 
@@ -180,6 +186,103 @@ test("the recent-path limit removes the oldest path while retaining recent files
     for (let index = 0; index < 257; index++) result(event("read", `file-${index}.lua`));
     assert.equal((await show("file-0.lua")).isError, true);
     assert.equal((await show("file-256.lua")).isError, false);
+  });
+});
+
+test("a reason is required and whitespace is normalized for quickfix", async () => {
+  await fixture(async ({ state, result, show, tool, requestPath }) => {
+    state(true);
+    result();
+    assert.deepEqual(tool.parameters.required, ["path", "line", "reason"]);
+    assert.match(tool.parameters.properties.reason.description, /not what code changed/);
+    for (const reason of [null, "", " \t\n", "x".repeat(501), "bad\u0000reason"]) {
+      assert.equal((await show("app.lua", 1, reason)).isError, true);
+      assert.equal(existsSync(requestPath), false);
+    }
+    assert.equal((await show("app.lua", 1, "  Trace the caller\n to its implementation.  ")).isError, false);
+    assert.equal(JSON.parse(readFileSync(requestPath, "utf8")).request.reason, "Trace the caller to its implementation.");
+  });
+});
+
+test("final settlement preserves the last unread jump and reports completion once", async () => {
+  await fixture(async ({ state, handlers, result, show, requestPath }) => {
+    state(true);
+    handlers.before_agent_start();
+    result();
+    await show();
+    const pending = JSON.parse(readFileSync(requestPath, "utf8"));
+    assert.equal(pending.done, false);
+    assert.equal(handlers.agent_end, undefined);
+    handlers.agent_settled({ aborted: false });
+    const completed = JSON.parse(readFileSync(requestPath, "utf8"));
+    assert.deepEqual(completed, { ...pending, done: true });
+    rmSync(requestPath);
+    handlers.agent_settled({ aborted: false });
+    assert.equal(existsSync(requestPath), false);
+  });
+});
+
+test("each prompt uses a fresh run and an empty prompt leaves the earlier report unchanged", async () => {
+  await fixture(async ({ state, handlers, result, show, requestPath }) => {
+    state(true);
+    handlers.before_agent_start();
+    result();
+    await show();
+    handlers.agent_settled({ aborted: false });
+    const first = JSON.parse(readFileSync(requestPath, "utf8"));
+    handlers.before_agent_start();
+    handlers.agent_settled({ aborted: false });
+    assert.deepEqual(JSON.parse(readFileSync(requestPath, "utf8")), first);
+    result();
+    await show("app.lua", 2, "Show the return value.");
+    handlers.agent_settled({ aborted: false });
+    const second = JSON.parse(readFileSync(requestPath, "utf8"));
+    assert.notEqual(second.run, first.run);
+    assert.equal(second.request.reason, "Show the return value.");
+    assert.equal(second.done, true);
+  });
+});
+
+test("completion after a toggle uses the current token without reviving the earlier jump", async () => {
+  await fixture(async ({ state, handlers, result, show, requestPath }) => {
+    state(true, "old-token");
+    result();
+    await show();
+    state(false, "new-token");
+    handlers.agent_settled({ aborted: true });
+    const report = JSON.parse(readFileSync(requestPath, "utf8"));
+    assert.equal(report.token, "new-token");
+    assert.equal(report.request.token, "old-token");
+    assert.equal(report.done, true);
+  });
+});
+
+test("a native session switch prevents completion of the previous session's pending request", async () => {
+  await fixture(async ({ state, handlers, result, show, requestPath }) => {
+    state(true);
+    result();
+    await show();
+    handlers.session_start();
+    rmSync(requestPath);
+    handlers.agent_settled({ aborted: false });
+    assert.equal(existsSync(requestPath), false);
+  });
+});
+
+test("completion reporting failures do not break a finished agent run", async () => {
+  await fixture(async ({ state, handlers, result, show, controlPath, requestPath }) => {
+    state(true);
+    result();
+    await show();
+    rmSync(controlPath);
+    rmSync(requestPath);
+    assert.doesNotThrow(() => handlers.agent_settled({ aborted: false }));
+    assert.equal(existsSync(requestPath), false);
+    state(true);
+    await show();
+    rmSync(requestPath);
+    mkdirSync(requestPath);
+    assert.doesNotThrow(() => handlers.agent_settled({ aborted: false }));
   });
 });
 

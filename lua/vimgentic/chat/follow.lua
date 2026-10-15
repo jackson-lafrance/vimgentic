@@ -56,14 +56,14 @@ function Follow:toggle()
   return self.enabled
 end
 
-function Follow:_receive()
-  if not self.running then return end
-  local request = read_request(self.request_path)
-  if not request or request.token ~= self.token or type(request.id) ~= "string" or request.id == self.last_id then return end
+function Follow:_show(request)
+  if type(request) ~= "table" or request.token ~= self.token or type(request.id) ~= "string" or request.id == self.last_id then return end
   self.last_id = request.id
   if not self.enabled or not self.visible then return end
   if type(request.path) ~= "string" or request.path:sub(1, 1) ~= "/" or request.path:find("[%z\1-\31\127]")
-    or type(request.line) ~= "number" or request.line < 1 or request.line % 1 ~= 0 then return end
+    or type(request.line) ~= "number" or request.line < 1 or request.line % 1 ~= 0
+    or type(request.reason) ~= "string" or not request.reason:find("%S") or vim.fn.strchars(request.reason) > 500
+    or request.reason:find("[%z\1-\8\11-\31\127]") then return end
   local window = self.editor_window()
   if not window or not vim.api.nvim_win_is_valid(window)
     or vim.api.nvim_win_get_tabpage(window) ~= vim.api.nvim_get_current_tabpage()
@@ -84,6 +84,48 @@ function Follow:_receive()
   vim.api.nvim_win_set_buf(window, buffer)
   local line = math.min(request.line, vim.api.nvim_buf_line_count(buffer))
   vim.api.nvim_win_set_cursor(window, { line, 0 })
+  table.insert(self.visits, {
+    path = vim.api.nvim_buf_get_name(buffer), lnum = line, col = 1, count = 1,
+    notes = vim.trim(request.reason:gsub("%s+", " ")),
+  })
+end
+
+function Follow:_quickfix()
+  if #self.visits == 0 then return end
+  local title = "vimgentic follow"
+  local window = self.editor_window()
+  if self.enabled and self.visible and window and vim.api.nvim_win_is_valid(window)
+    and vim.api.nvim_win_get_tabpage(window) == vim.api.nvim_get_current_tabpage() then
+    vim.api.nvim_win_call(window, function()
+      require("vimgentic.ui.qf").open(self.visits, title, { remember = false })
+    end)
+  else
+    -- Keep the trail available via :copen without opening a window in another tab.
+    vim.fn.setqflist({}, " ", { title = title, items = require("vimgentic.parse").to_quickfix(self.visits) })
+  end
+end
+
+function Follow:_receive()
+  if not self.running then return end
+  local report = read_request(self.request_path)
+  if not report or type(report.run) ~= "string" or report.run == "" or type(report.done) ~= "boolean" then return end
+  local current = report.token == self.token
+  -- A toggle invalidates navigation, but not completion of an already observed run.
+  if not current and (not report.done or report.run ~= self.run) then return end
+  if self.run ~= report.run then
+    -- A queued prompt can replace the completion report between polls.
+    if self.run and not self.finished then self:_quickfix() end
+    self.run, self.visits, self.finished, self.last_id = report.run, {}, false, nil
+  end
+  if self.finished then return end
+  if current then
+    local shown, error_message = pcall(self._show, self, report.request)
+    if not shown then util.notify("Pi follow: " .. tostring(error_message), vim.log.levels.WARN) end
+  end
+  if report.done then
+    self.finished = true
+    self:_quickfix()
+  end
 end
 
 function Follow:start()
@@ -103,6 +145,7 @@ end
 function Follow:stop()
   self.running = false
   self.token = nil
+  self.run, self.visits, self.finished, self.last_id = nil, {}, false, nil
   if self.watcher then
     self.watcher:stop()
     self.watcher:close()

@@ -27,6 +27,8 @@ function filePath(path, cwd) {
 
 const guidance = "After each read, edit, or write, decide whether showing that file helps the user follow the current task. "
   + "Use vimgentic_show_file for useful source context, important definitions, and meaningful changes, with a relevant line. "
+  + "Include a short reason explaining why showing this file helps the user understand the task, not a summary of edits. "
+  + "Neovim collects actual jumps and shows their reasons in quickfix when this prompt finishes. "
   + "Skip incidental lookups, repeated context, and noisy generated or dependency files unless they matter to the task. "
   + "Do not show every file automatically. No tool call is needed when you decide not to show a file. "
   + "This only changes the adjacent Neovim view; it never grants permission to edit files.";
@@ -38,10 +40,24 @@ module.exports = function follow(pi) {
 
   const visited = new Set();
   let enabled = false;
+  let run = randomUUID();
+  let lastRequest;
 
-  pi.on("session_start", () => visited.clear());
-  pi.on("before_agent_start", () => {
+  function publish(state, request, done) {
+    const temporary = `${requestPath}.tmp-${process.pid}`;
+    writeFileSync(temporary, JSON.stringify({ token: state.token, run, request, done }), { mode: 0o600 });
+    renameSync(temporary, requestPath);
+  }
+
+  function reset() {
     visited.clear();
+    run = randomUUID();
+    lastRequest = undefined;
+  }
+
+  pi.on("session_start", reset);
+  pi.on("before_agent_start", () => {
+    reset();
     enabled = control(controlPath)?.enabled === true;
     return { message: {
       customType: "vimgentic-follow",
@@ -49,6 +65,20 @@ module.exports = function follow(pi) {
         : "Vimgentic follow mode is OFF. Do not call vimgentic_show_file unless a later tool result says it is ON.",
       display: false,
     } };
+  });
+
+  pi.on("agent_settled", () => {
+    const request = lastRequest;
+    lastRequest = undefined;
+    if (!request) return;
+    const state = control(controlPath);
+    if (!state) return;
+    try {
+      // Retain the last choice so completion cannot overwrite an unread jump.
+      publish(state, request, true);
+    } catch {
+      // Reporting completion must never break the agent's finished run.
+    }
   });
 
   pi.on("tool_result", (event, ctx) => {
@@ -64,7 +94,8 @@ module.exports = function follow(pi) {
     let reminder;
     if (enabled && !event.isError && path) {
       reminder = "Vimgentic follow is ON: decide whether this file is worth showing. "
-        + "If useful, call vimgentic_show_file with its path and a relevant line; otherwise continue without navigating.";
+        + "If useful, call vimgentic_show_file with its path, a relevant line, and a short reason why showing it helps; "
+        + "otherwise continue without navigating.";
     } else if (!enabled && wasEnabled) {
       reminder = "Vimgentic follow is now OFF. Do not call vimgentic_show_file.";
     }
@@ -84,8 +115,10 @@ module.exports = function follow(pi) {
       properties: {
         path: { type: "string", minLength: 1, description: "Path of a file read, edited, or written during this turn." },
         line: { type: "integer", minimum: 1, description: "Relevant 1-based line number." },
+        reason: { type: "string", minLength: 1, maxLength: 500,
+          description: "Briefly explain why showing this file helps the user follow the task, not what code changed." },
       },
-      required: ["path", "line"],
+      required: ["path", "line", "reason"],
       additionalProperties: false,
     },
     async execute(_id, params, _signal, _onUpdate, ctx) {
@@ -95,9 +128,12 @@ module.exports = function follow(pi) {
       const path = filePath(params.path, ctx.cwd);
       if (!path || !visited.has(path)) return result("Only show files successfully read, edited, or written during this turn.", true);
       if (!Number.isSafeInteger(params.line) || params.line < 1) return result("The line must be a positive integer.", true);
-      const temporary = `${requestPath}.tmp-${process.pid}`;
-      writeFileSync(temporary, JSON.stringify({ token: state.token, id: randomUUID(), path, line: params.line }), { mode: 0o600 });
-      renameSync(temporary, requestPath);
+      if (typeof params.reason !== "string" || !params.reason.trim() || [...params.reason].length > 500
+        || /[\x00-\x08\x0b-\x1f\x7f]/.test(params.reason)) return result("Give a short, non-empty reason for showing this file (at most 500 characters).", true);
+      const reason = params.reason.replace(/\s+/g, " ").trim();
+      const request = { token: state.token, id: randomUUID(), path, line: params.line, reason };
+      publish(state, request, false);
+      lastRequest = request;
       return result("Navigation requested. Neovim may skip it if the sidebar is hidden or an editor buffer has unsaved changes.");
     },
   });
